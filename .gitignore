@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Entornos virtuales
+.venv/
+venv/
+
+# Variables de entorno y credenciales
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+
+# Archivos temporales
+*.log
+tmp/
