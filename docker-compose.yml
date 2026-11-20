@@ -1,0 +1,34 @@
+
+services:
+  agente-planta:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: pia3-agente
+
+    restart: unless-stopped
+
+    networks:
+      - planta-lan
+
+    labels:
+      academia.planta: "pc"
+
+    environment:
+      MQTT_HOST: broker
+      MQTT_PORT: "1883"
+      PLANTA_API_URL: http://sim:8100
+      SISTEMA_NOMBRE: Eduardo-Trigo
+
+      HTTP_PROXY: http://enlace:3128
+      HTTPS_PROXY: http://enlace:3128
+      NO_PROXY: broker,sim,localhost
+
+    cpus: 1.0
+    mem_limit: 512m
+
+networks:
+  planta-lan:
+    external: true
+    name: planta-lan
