@@ -6,6 +6,10 @@ import threading
 from datetime import datetime, timezone
 
 import paho.mqtt.client as mqtt
+from collections.abc import Callable
+
+from planta_contrato import NotaRecorrida
+from sistema.nota_router import recibir_nota_mqtt
 
 from planta_contrato import EstadoSistema, Topicos
 
@@ -14,7 +18,9 @@ logger = logging.getLogger(__name__)
 INTERVALO_HEARTBEAT = 30
 
 
-def conectar_mqtt() -> mqtt.Client:
+def conectar_mqtt(
+    encolar_nota: Callable[[NotaRecorrida], bool] | None = None,
+) -> mqtt.Client:
     """Configura y conecta el cliente MQTT al broker de PIA-3."""
 
     host = os.getenv("MQTT_HOST", "localhost")
@@ -72,9 +78,19 @@ def conectar_mqtt() -> mqtt.Client:
             reason_code,
         )
 
+    
     def on_message(client, userdata, mensaje):
-        """Recibe los mensajes publicados por la planta."""
+        """Recibe los mensajes MQTT de la planta."""
 
+        if encolar_nota is not None:
+            recibir_nota_mqtt(
+                topico=mensaje.topic,
+                payload=mensaje.payload,
+                encolar=encolar_nota,
+            )
+            return
+
+        # Comportamiento anterior, cuando no hay worker.
         contenido = mensaje.payload.decode(
             "utf-8",
             errors="replace",
@@ -85,6 +101,7 @@ def conectar_mqtt() -> mqtt.Client:
             mensaje.topic,
             contenido,
         )
+
 
     cliente.on_connect = on_connect
     cliente.on_disconnect = on_disconnect
