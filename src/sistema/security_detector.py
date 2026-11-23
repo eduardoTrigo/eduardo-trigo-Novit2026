@@ -24,6 +24,8 @@ PATRONES_SEGURIDAD = {
         [
             r"\bchorro de agua a presion\b",
             r"\bagua a presion saliendo\b",
+            r"\bsale agua a presion\b",
+            r"\bsale un chorro de agua a presion\b",
             r"\bperdida con proyeccion\b",
             r"\bfuga con proyeccion\b",
             r"\bproyeccion de agua\b",
@@ -42,6 +44,8 @@ PATRONES_SEGURIDAD = {
         [
             r"\bhay humo\b",
             r"\bsale humo\b",
+            r"\bolor a quemado\b",
+            r"\bhuele a quemado\b",
             r"\bse esta incendiando\b",
             r"\bhay fuego\b",
             r"\bse prendio fuego\b",

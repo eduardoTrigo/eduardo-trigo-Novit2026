@@ -1,4 +1,7 @@
 
+# Academia Novit 2026 - PIA-3
+# Sistema integrado de seguridad
+
 services:
   agente-planta:
     build:
@@ -16,19 +19,46 @@ services:
       academia.planta: "pc"
 
     environment:
+      # Conexion MQTT con Mosquitto
       MQTT_HOST: broker
       MQTT_PORT: "1883"
+
+      # API de la planta simulada
       PLANTA_API_URL: http://sim:8100
+
+      # Identificacion de nuestro sistema
       SISTEMA_NOMBRE: Eduardo-Trigo
 
+      # Base persistente SQLite
+      PIA3_DB_PATH: /app/data_runtime/seguridad.sqlite3
+
+      # Publicacion de alertas desactivada
+      # durante las pruebas iniciales
+      PIA3_ENABLE_OUTBOX: "1"
+
+      # Cache de modelos STT
+      HF_HOME: /app/modelos
+
+      # Proxy de la planta
       HTTP_PROXY: http://enlace:3128
       HTTPS_PROXY: http://enlace:3128
-      NO_PROXY: broker,sim,localhost
+      NO_PROXY: broker,sim,localhost,127.0.0.1
 
-    cpus: 1.0
-    mem_limit: 512m
+    volumes:
+      # Conserva notas y alertas ante reinicios
+      - pia3_datos:/app/data_runtime
+
+      # Evita descargar Whisper en cada recreacion
+      - pia3_modelos:/app/modelos
+
+    cpus: 2.0
+    mem_limit: 2g
 
 networks:
   planta-lan:
     external: true
     name: planta-lan
+
+volumes:
+  pia3_datos:
+  pia3_modelos:
