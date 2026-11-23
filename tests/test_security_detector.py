@@ -1,5 +1,5 @@
 
-"""Pruebas iniciales del detector local de seguridad."""
+"""Pruebas del detector local de seguridad."""
 
 import pytest
 
@@ -43,7 +43,7 @@ def test_detectar_multiples_condiciones():
 
     assert codigos == {"S3", "S4"}
 
-# evita falsas alarmas
+
 @pytest.mark.parametrize(
     "frase",
     [
@@ -63,8 +63,6 @@ def test_no_alertar_condiciones_negadas(frase):
 
 
 def test_alertar_solo_condicion_afirmativa():
-    """Debe distinguir afirmaciones y negaciones en una nota."""
-
     texto = "Hay humo en la bomba, pero no hay un operador herido"
 
     condiciones = detectar_condiciones_inseguras(texto)
@@ -72,3 +70,23 @@ def test_alertar_solo_condicion_afirmativa():
     codigos = {condicion.codigo for condicion in condiciones}
 
     assert codigos == {"S3"}
+
+
+@pytest.mark.parametrize(
+    "frase,esperados",
+    [
+        ("No hay humo en la entrada y hay humo en la sala", {"S3"}),
+        ("No hay humo ni olor a gas", set()),
+        ("No hay humo ni hay olor a gas", set()),
+        ("No se siente olor a gas", set()),
+        ("No hay humo en la entrada, pero hay humo en la sala", {"S3"}),
+        ("No hay humo ni olor a gas, pero hay fuego en la sala", {"S3"}),
+        ("Hay humo en la sala y no hay humo en la entrada", {"S3"}),
+        ("Sale agua a presión para todos lados", {"S1"}),
+        ("No hay humo ni olor a gas, pero sale agua a presión", {"S1"}),
+    ],
+)
+def test_negaciones_coordinadas_y_coincidencias_posteriores(frase, esperados):
+    condiciones = detectar_condiciones_inseguras(frase)
+
+    assert {condicion.codigo for condicion in condiciones} == esperados

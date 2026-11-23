@@ -92,17 +92,19 @@ def dividir_en_segmentos(texto: str) -> list[str]:
 
 
 def esta_negado(segmento: str, inicio: int) -> bool:
-    """Detecta negaciones inmediatamente anteriores al hallazgo."""
+    """Detecta negaciones directas y coordinadas antes de cada hallazgo."""
 
     contexto = segmento[max(0, inicio - 45):inicio]
 
     patrones_negacion = [
-        r"\bno\s+(?:hay\s+)?$",
+        r"\bno\s+$",
+        r"\bno\s+hay\s+$",
         r"\bno\s+se\s+siente\s+$",
         r"\bno\s+se\s+percibe\s+$",
         r"\bsin\s+$",
         r"\bningun(?:a)?\s+$",
         r"\bno\s+hay\s+un(?:a)?\s+$",
+        r"\bni\s+(?:tampoco\s+)?(?:hay\s+|se\s+siente\s+)?$",
     ]
 
     return any(
@@ -114,7 +116,7 @@ def esta_negado(segmento: str, inicio: int) -> bool:
 def detectar_condiciones_inseguras(
     texto: str,
 ) -> list[CondicionInsegura]:
-    """Detecta condiciones afirmativas y omite negaciones simples."""
+    """Detecta condiciones afirmativas y omite negaciones."""
 
     texto_normalizado = normalizar_texto(texto)
     segmentos = dividir_en_segmentos(texto_normalizado)
@@ -126,23 +128,24 @@ def detectar_condiciones_inseguras(
         for codigo, (descripcion, patrones) in PATRONES_SEGURIDAD.items():
 
             for patron in patrones:
-                coincidencia = re.search(patron, segmento)
+                # Una coincidencia negada no debe impedir detectar
+                # otra afirmativa más adelante en el mismo segmento.
+                for coincidencia in re.finditer(patron, segmento):
+                    if esta_negado(segmento, coincidencia.start()):
+                        continue
 
-                if coincidencia is None:
-                    continue
-
-                if esta_negado(segmento, coincidencia.start()):
-                    continue
-
-                if codigo not in codigos_detectados:
-                    resultados.append(
-                        CondicionInsegura(
-                            codigo=codigo,
-                            descripcion=descripcion,
+                    if codigo not in codigos_detectados:
+                        resultados.append(
+                            CondicionInsegura(
+                                codigo=codigo,
+                                descripcion=descripcion,
+                            )
                         )
-                    )
-                    codigos_detectados.add(codigo)
+                        codigos_detectados.add(codigo)
 
-                break
+                    break
+
+                if codigo in codigos_detectados:
+                    break
 
     return resultados
