@@ -51,3 +51,41 @@ def test_no_publicar_sin_conexion():
     publicar_estado(cliente)
 
     cliente.publish.assert_not_called()
+
+
+def test_mqtt_entrega_nota_al_router(monkeypatch):
+    """El callback MQTT entrega una nota válida al router."""
+
+    from unittest.mock import MagicMock, patch
+
+    from sistema.mqtt_client import conectar_mqtt
+    from test_security_messages import crear_nota
+    import sistema.mqtt_client as modulo_mqtt
+
+    cliente = MagicMock()
+
+    # No establecer conexiones reales en esta prueba.
+    monkeypatch.setattr(
+        modulo_mqtt.mqtt,
+        "Client",
+        MagicMock(return_value=cliente),
+    )
+
+    encolar = MagicMock(return_value=True)
+
+    conectar_mqtt(encolar_nota=encolar)
+
+    mensaje = MagicMock()
+    mensaje.topic = Topicos.RECORRIDAS
+    mensaje.payload = (
+        crear_nota().model_dump_json().encode("utf-8")
+    )
+
+    # Ejecutar el callback registrado.
+    cliente.on_message(cliente, None, mensaje)
+
+    encolar.assert_called_once()
+
+    nota = encolar.call_args.args[0]
+
+    assert nota.id == "NOTA-00001"
