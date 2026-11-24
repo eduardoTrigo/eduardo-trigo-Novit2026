@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import timedelta
 import sqlite3
 from threading import Event
@@ -109,7 +110,7 @@ def test_aceptacion_generica_sin_candidato_publicado_no_resuelve_valor(tmp_path)
     turno = partes.obtener(nota.id)
     procesar(partes, worker, respuesta(turno, "Sí, confirmo."))
     assert resultado(partes, "RESP-001") == "insuficiente"
-    assert partes.obtener(nota.id) == turno
+    assert partes.obtener(nota.id) == replace(turno, interacciones=1)
 
 
 def test_diferencial_sin_equipo_resuelve_ambas_dudas_en_orden(tmp_path):
@@ -175,7 +176,7 @@ def test_insuficiente_repetida_no_publica_otra_pregunta(tmp_path):
     procesar(partes, worker, respuesta(turno, "¿Cómo? No te sigo.", identificador="R1"))
     procesar(partes, worker, respuesta(turno, "¿CÓMO?  No te sigo.", identificador="R2"))
     assert resultado(partes, "R1") == "insuficiente" and resultado(partes, "R2") == "duplicada"
-    assert partes.obtener(nota.id) == turno and outbox.pendientes() == 1
+    assert partes.obtener(nota.id) == replace(turno, interacciones=1) and outbox.pendientes() == 1
 
 
 def test_unidad_ausente_sin_fuente_oficial_se_pregunta(tmp_path):

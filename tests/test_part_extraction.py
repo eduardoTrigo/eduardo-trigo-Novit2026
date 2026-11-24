@@ -26,6 +26,18 @@ def definicion_planta():
 @pytest.mark.parametrize(
     "texto,esperado",
     [
+        ("La uno tiene presión de succión de menos cero coma dos bar", [
+            ("B-101", "presion_succion", -0.2, "bar"),
+        ]),
+        ("La uno tiene presión de succión de menos uno con ocho bar", [
+            ("B-101", "presion_succion", -1.8, "bar"),
+        ]),
+        ("La uno tiene presión de succión de -0,2 bar", [
+            ("B-101", "presion_succion", -0.2, "bar"),
+        ]),
+        ("La uno tiene presión de succión de cero coma dos bar", [
+            ("B-101", "presion_succion", 0.2, "bar"),
+        ]),
         ("La dos está en 1640 de descarga", [
             ("B-102", "presion_descarga_local", 1640, "psi"),
         ]),
@@ -93,6 +105,10 @@ def test_extraer_filas_validas(texto, esperado):
         "La uno está en 115 litros de descarga",
         "La uno está de descarga",
         "La uno no está en 115 kilos de descarga",
+        "La uno no tiene presión de succión de menos cero coma dos bar",
+        "La uno tiene menos de cero coma dos bar de succión",
+        "La uno tiene presión de succión de menos, cero coma dos bar",
+        "La uno tiene presión de succión de menos -0,2 bar",
         "La dos está en más o menos 1640 psi de descarga",
         "La uno y la dos están en marcha. El rodamiento medio 64 grados.",
     ],

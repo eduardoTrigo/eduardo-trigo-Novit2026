@@ -3,6 +3,7 @@
 
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 
 from planta_contrato import NotaRecorrida
@@ -218,6 +219,21 @@ class AlmacenNotas:
             """).fetchone()
 
             return fila["total"]
+
+    def hay_seguridad_lista(self) -> bool:
+        """Detecta notas en ejecución o listas para reclamar sin esperar el bloqueo SQLite."""
+        try:
+            with closing(sqlite3.connect(self.ruta, timeout=0)) as db:
+                return bool(db.execute("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM notas WHERE estado = 'procesando'
+                           OR (estado = 'pendiente' AND intentos < ? AND proximo_intento <= ?)
+                    )
+                """, (self.MAX_INTENTOS, time.time())).fetchone()[0])
+        except sqlite3.OperationalError as error:
+            if error.sqlite_errorcode in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+                return True
+            raise
 
     def agotadas(self) -> int:
         """Cuenta notas que requieren intervención manual."""

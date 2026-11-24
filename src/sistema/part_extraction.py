@@ -33,12 +33,12 @@ _PALABRAS = "|".join(sorted(
 ))
 _NUMERAL = rf"(?:[+-]?\d+(?:[.,]\d+)?|{_PALABRAS})\b"
 _NUMEROS = re.compile(
-    rf"(?<![\w-]){_NUMERAL}(?:\s+(?:(?:y|con|coma|punto)\s+)?{_NUMERAL})*"
+    rf"(?<![\w-])(?:menos\s+)?{_NUMERAL}(?:\s+(?:(?:y|con|coma|punto)\s+)?{_NUMERAL})*"
     rf"(?:\s+y\s+medio\b)?"
 )
 _FRASES = re.compile(r"[!?;\n]+|(?<!\d)\.|\.(?!\d)")
 _CLAUSULAS = re.compile(
-    r"(?<!\d),|,(?!\d)|\by\s+(?=(?:(?:el|la|las)\s+)?"
+    r"(?<!\bmenos)(?:(?<!\d),|,(?!\d))|\by\s+(?=(?:(?:el|la|las)\s+)?"
     r"(?:rodamiento|motor|temperatura|presion|descarga|diferencial|nivel|correas|"
     r"gotea|pierde|sigue goteando|visor|hace|tiene)\b)"
 )
@@ -114,6 +114,12 @@ def _entero(tokens: list[str]) -> int | None:
 
 
 def interpretar_numero(texto: str, decimal_implicito: bool = False) -> float | None:
+    if texto.startswith("menos "):
+        magnitud = texto[6:].lstrip()
+        if magnitud.startswith(("+", "-", "menos ")):
+            return None
+        valor = interpretar_numero(magnitud, decimal_implicito)
+        return -valor if valor is not None else None
     if re.fullmatch(r"[+-]?\d+(?:[.,]\d+)?", texto):
         if re.search(r"[.,]\d{3}$", texto):
             return None  # Separador decimal o de miles.
@@ -176,7 +182,10 @@ def _fila(clausula, equipo, sensores, candidatos=()):
         return None, True
 
     variable, permitidas = candidatas[0]
-    dicho = numeros[0].group()
+    numero = numeros[0]
+    if re.search(r"\bmenos\b", clausula[:numero.start()] + " " + clausula[numero.end():]):
+        return None, True
+    dicho = numero.group()
     valor = interpretar_numero(dicho, variable in {"presion_diferencial", "nivel"})
     if valor is None:
         return None, True
@@ -265,7 +274,8 @@ def extraer_parte(texto: str, catalogo: dict) -> ResultadoExtraccion:
     bombas_mencionadas = {}
     bomba_sin_identificar = False
 
-    for frase in _FRASES.split(normalizar_texto(texto)):
+    texto = re.sub(r"\bmenos\s+,", "menos,", normalizar_texto(texto))
+    for frase in _FRASES.split(texto):
         equipo = None
         candidatos = []
         for indice, fragmento in enumerate(referencias.split(frase)):

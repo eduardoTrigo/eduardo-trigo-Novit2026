@@ -171,6 +171,52 @@ def test_corrige_hasta_tercera_interaccion(tmp_path):
     assert borradores.pendientes() == 3
 
 
+def test_tres_respuestas_insuficientes_distintas_agotan_turno_sin_cambiar_version(tmp_path):
+    nota, _, borradores, partes, worker = preparar_borrador(tmp_path)
+    inicial = partes.obtener(nota.id)
+    primera = respuesta(inicial, "No sé.")
+    procesar(partes, worker, primera)
+    assert not partes.guardar_respuesta(primera)
+    repetida = primera.model_copy(update={"id": "DUP", "texto": "NO SÉ."})
+    procesar(partes, worker, repetida)
+    assert resultado(partes, repetida.id) == "duplicada"
+
+    _, _, _, partes, worker = preparar(tmp_path)
+    assert partes.obtener(nota.id).interacciones == 1
+    segunda = respuesta(inicial, "No recuerdo.", identificador="RESP-SEGUNDA")
+    procesar(partes, worker, segunda)
+    assert partes.obtener(nota.id).estado == "borrador_pendiente"
+    tercera = respuesta(inicial, "No entendí.", identificador="RESP-TERCERA")
+    procesar(partes, worker, tercera)
+    final = partes.obtener(nota.id)
+    assert final.estado == "revision_manual" and final.interacciones == 3 and final.version == 1
+    assert final.mensaje_id == inicial.mensaje_id and final.filas == inicial.filas
+    assert resultado(partes, tercera.id) == "limite_interacciones"
+    assert borradores.pendientes() == 1
+
+
+def test_migracion_cuenta_insuficientes_historicas_y_turnos_anteriores(tmp_path):
+    nota, _, _, partes, worker = preparar_borrador(tmp_path)
+    r1 = respuesta(partes.obtener(nota.id), "No. La uno estaba en ciento quince kilos.")
+    procesar(partes, worker, r1)
+    vigente = partes.obtener(nota.id)
+    r2 = respuesta(vigente, "No recuerdo.", identificador="RESP-SEGUNDA")
+    procesar(partes, worker, r2)
+    with sqlite3.connect(partes.ruta) as db:
+        columnas = {r[1] for r in db.execute("PRAGMA table_info(partes)")}
+        if "interacciones" in columnas:
+            db.execute("ALTER TABLE partes DROP COLUMN interacciones")
+
+    _, _, _, partes, worker = preparar(tmp_path)
+    vigente = partes.obtener(nota.id)
+    assert vigente.version == 2 and vigente.interacciones == 2
+    r3 = respuesta(vigente, "Sí, confirmo.", identificador="RESP-TERCERA")
+    procesar(partes, worker, r3)
+    final = preparar(tmp_path)[3].obtener(nota.id)
+    assert final.estado == "confirmado" and final.interacciones == 3
+    assert resultado(partes, r2.id) == "insuficiente"
+
+
 def test_si_se_omite_actualizacion_se_revierte_borrador_y_respuesta(tmp_path):
     nota, _, borradores, partes, worker = preparar_borrador(tmp_path)
     inicial = partes.obtener(nota.id)

@@ -29,6 +29,7 @@ from sistema.outbox_worker import WorkerOutbox
 from sistema.part_context import ClientePlanta
 from sistema.part_store import AlmacenPartes
 from sistema.part_worker import WorkerPartes
+from sistema.transcription_service import TranscripcionPrioritaria
 from sistema.whisper_adapter import WhisperLocal
 
 
@@ -79,7 +80,6 @@ def main():
     outbox_borradores = OutboxSeguridad(ruta, borradores=True)
     planta = ClientePlanta(os.getenv("PLANTA_API_URL", "http://localhost:8100"))
     partes = AlmacenPartes(almacen, outbox_borradores)
-    worker_partes = WorkerPartes(partes, planta.catalogo, historial=planta.historial)
 
     logger.info("Base SQLite: %s", ruta)
     logger.info("Notas pendientes: %s", almacen.pendientes())
@@ -93,7 +93,11 @@ def main():
         logger.info("Modo seguro: publicaciones desactivadas")
 
     logger.info("Cargando motor Whisper")
-    motor = WhisperLocal(modelo="base")
+    motor = TranscripcionPrioritaria(WhisperLocal(modelo="base"), almacen.hay_seguridad_lista)
+    worker_partes = WorkerPartes(
+        partes, planta.catalogo, historial=planta.historial,
+        transcribir_respuesta=motor.transcribir_respuesta, hay_seguridad=almacen.hay_seguridad_lista,
+    )
 
     procesador = crear_procesador_persistente(
         almacen=almacen,
