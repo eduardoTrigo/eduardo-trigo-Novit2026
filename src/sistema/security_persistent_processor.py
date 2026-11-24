@@ -48,6 +48,7 @@ def crear_procesador_persistente(
                 nota_id=nota.id,
                 eventos=eventos,
                 tablet=tablet,
+                transcripcion=resultado.texto,
             )
 
             if not completada:

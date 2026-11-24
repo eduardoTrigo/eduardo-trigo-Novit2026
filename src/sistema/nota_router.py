@@ -30,7 +30,7 @@ def recibir_nota_mqtt(
         )
         return False
 
-    if not nota.audio_url:
+    if not nota.audio_url and not nota.id.startswith("VIVO-"):
         logger.warning(
             "Nota %s sin audio: requiere tratamiento separado",
             nota.id,

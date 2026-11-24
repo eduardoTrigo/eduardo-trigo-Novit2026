@@ -8,10 +8,9 @@ from datetime import datetime, timezone
 import paho.mqtt.client as mqtt
 from collections.abc import Callable
 
-from planta_contrato import NotaRecorrida
+from planta_contrato import EstadoSistema, NotaRecorrida, RespuestaOperador, Topicos
+from pydantic import ValidationError
 from sistema.nota_router import recibir_nota_mqtt
-
-from planta_contrato import EstadoSistema, Topicos
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +19,8 @@ INTERVALO_HEARTBEAT = 30
 
 def conectar_mqtt(
     encolar_nota: Callable[[NotaRecorrida], bool] | None = None,
+    *,
+    encolar_respuesta: Callable[[RespuestaOperador], bool] | None = None,
 ) -> mqtt.Client:
     """Configura y conecta el cliente MQTT al broker de PIA-3."""
 
@@ -57,6 +58,11 @@ def conectar_mqtt(
                     resultado,
                 )
 
+            if encolar_respuesta is not None:
+                resultado_respuestas, _ = client.subscribe(Topicos.RESPUESTAS, qos=1)
+                if resultado_respuestas != mqtt.MQTT_ERR_SUCCESS:
+                    logger.error("Error al suscribirse a %s: %s", Topicos.RESPUESTAS, resultado_respuestas)
+
             client.conectado.set()
 
         else:
@@ -81,6 +87,18 @@ def conectar_mqtt(
     
     def on_message(client, userdata, mensaje):
         """Recibe los mensajes MQTT de la planta."""
+
+        if mensaje.topic == Topicos.RESPUESTAS and encolar_respuesta is not None:
+            try:
+                respuesta = RespuestaOperador.model_validate_json(mensaje.payload, strict=True)
+            except ValidationError:
+                logger.warning("Mensaje MQTT inválido en %s", Topicos.RESPUESTAS)
+                return
+            try:
+                encolar_respuesta(respuesta)
+            except Exception:
+                logger.exception("Error al persistir la respuesta %s", respuesta.id)
+            return
 
         if encolar_nota is not None:
             recibir_nota_mqtt(

@@ -3,6 +3,7 @@
 
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 
 from planta_contrato import NotaRecorrida
@@ -25,6 +26,7 @@ class AlmacenNotas:
 
     def _crear_tabla(self):
         with self._conectar() as db:
+            db.execute("BEGIN IMMEDIATE")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS notas (
                     id TEXT PRIMARY KEY,
@@ -39,7 +41,8 @@ class AlmacenNotas:
                     ultimo_error TEXT,
                     actualizado TEXT NOT NULL
                         DEFAULT CURRENT_TIMESTAMP,
-                    proximo_intento REAL NOT NULL DEFAULT 0
+                    proximo_intento REAL NOT NULL DEFAULT 0,
+                    transcripcion TEXT
                 )
             """)
 
@@ -57,14 +60,18 @@ class AlmacenNotas:
                     REAL NOT NULL DEFAULT 0
                 """)
 
+            if "transcripcion" not in columnas:
+                db.execute("ALTER TABLE notas ADD COLUMN transcripcion TEXT")
+
     def guardar(self, nota: NotaRecorrida) -> bool:
+        solo_evidencia = nota.id.startswith("VIVO-") and not nota.audio_url
         with self._conectar() as db:
             cursor = db.execute(
                 """
-                INSERT OR IGNORE INTO notas (id, payload)
-                VALUES (?, ?)
+                INSERT OR IGNORE INTO notas (id, payload, estado)
+                VALUES (?, ?, ?)
                 """,
-                (nota.id, nota.model_dump_json()),
+                (nota.id, nota.model_dump_json(), "completada" if solo_evidencia else "pendiente"),
             )
             return cursor.rowcount == 1
 
@@ -187,6 +194,20 @@ class AlmacenNotas:
 
             return fila["estado"] if fila else None
 
+    def obtener_transcripcion(self, nota_id: str) -> str | None:
+        """Lee el texto duradero de una nota completada, si lo tiene."""
+        with self._conectar() as db:
+            fila = db.execute(
+                """
+                SELECT transcripcion
+                FROM notas
+                WHERE id = ? AND estado = 'completada'
+                """,
+                (nota_id,),
+            ).fetchone()
+
+            return fila["transcripcion"] if fila else None
+
     def pendientes(self) -> int:
         """Cuenta notas pendientes, incluso las bloqueadas."""
 
@@ -198,6 +219,21 @@ class AlmacenNotas:
             """).fetchone()
 
             return fila["total"]
+
+    def hay_seguridad_lista(self) -> bool:
+        """Detecta notas en ejecución o listas para reclamar sin esperar el bloqueo SQLite."""
+        try:
+            with closing(sqlite3.connect(self.ruta, timeout=0)) as db:
+                return bool(db.execute("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM notas WHERE estado = 'procesando'
+                           OR (estado = 'pendiente' AND intentos < ? AND proximo_intento <= ?)
+                    )
+                """, (self.MAX_INTENTOS, time.time())).fetchone()[0])
+        except sqlite3.OperationalError as error:
+            if error.sqlite_errorcode in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+                return True
+            raise
 
     def agotadas(self) -> int:
         """Cuenta notas que requieren intervención manual."""

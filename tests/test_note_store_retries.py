@@ -98,14 +98,21 @@ def test_migracion_conserva_notas_existentes(tmp_path):
             (nota.id, nota.model_dump_json()),
         )
 
+    AlmacenNotas(ruta)
     almacen = AlmacenNotas(ruta)
-
     assert almacen.obtener_estado(nota.id) == "completada"
+    assert almacen.obtener_transcripcion(nota.id) is None
 
     with sqlite3.connect(ruta) as db:
         columnas = {
-            fila[1]
+            fila[1]: fila
             for fila in db.execute("PRAGMA table_info(notas)")
         }
+        payload, transcripcion = db.execute(
+            "SELECT payload, transcripcion FROM notas WHERE id = ?", (nota.id,)
+        ).fetchone()
 
     assert "proximo_intento" in columnas
+    assert columnas["transcripcion"][3] == 0
+    assert type(nota).model_validate_json(payload) == nota
+    assert transcripcion is None

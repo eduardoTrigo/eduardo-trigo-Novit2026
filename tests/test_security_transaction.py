@@ -52,6 +52,7 @@ def test_completar_sin_riesgos(tmp_path):
     ) is True
 
     assert almacen.obtener_estado(nota.id) == "completada"
+    assert almacen.obtener_transcripcion(nota.id) is None
     assert outbox.pendientes() == 0
 
 
@@ -65,11 +66,12 @@ def test_rollback_si_falla_outbox(tmp_path):
         nota, condiciones
     )
 
-    # Provocar un fallo de inserción en la outbox.
+    # Fallar en el aviso, cuando el evento ya se insertó.
     with sqlite3.connect(almacen.ruta) as db:
         db.execute("""
             CREATE TRIGGER bloquear_outbox
             BEFORE INSERT ON outbox
+            WHEN NEW.topico = 'sistema/tablet'
             BEGIN
                 SELECT RAISE(ABORT, 'Error simulado');
             END
@@ -77,8 +79,32 @@ def test_rollback_si_falla_outbox(tmp_path):
 
     with pytest.raises(sqlite3.IntegrityError):
         completar_con_alertas(
-            almacen, nota.id, eventos, tablet
+            almacen, nota.id, eventos, tablet, transcripcion="Hay humo"
         )
 
     assert almacen.obtener_estado(nota.id) == "procesando"
+    assert almacen.obtener_transcripcion(nota.id) is None
+    assert outbox.pendientes() == 0
+
+
+def test_rollback_si_no_se_actualiza_la_nota(tmp_path):
+    almacen, outbox, nota = preparar(tmp_path)
+    eventos, tablet = crear_mensajes_seguridad(
+        nota, [CondicionInsegura("S3", "Humo o fuego")]
+    )
+    with sqlite3.connect(almacen.ruta) as db:
+        db.execute("""
+            CREATE TRIGGER omitir_cierre
+            BEFORE UPDATE OF estado ON notas
+            BEGIN
+                SELECT RAISE(IGNORE);
+            END
+        """)
+
+    assert completar_con_alertas(
+        almacen, nota.id, eventos, tablet, transcripcion="Hay humo"
+    ) is False
+
+    assert almacen.obtener_estado(nota.id) == "procesando"
+    assert almacen.obtener_transcripcion(nota.id) is None
     assert outbox.pendientes() == 0

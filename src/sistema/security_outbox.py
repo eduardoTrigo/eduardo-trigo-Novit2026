@@ -17,14 +17,16 @@ logger = logging.getLogger(__name__)
 class OutboxSeguridad:
     MAX_INTENTOS = 3
 
-    def __init__(self, ruta: str | Path):
+    def __init__(self, ruta: str | Path, *, borradores: bool = False):
         self.ruta = Path(ruta)
+        self.borradores = borradores
         self.ruta.parent.mkdir(
             parents=True,
             exist_ok=True,
         )
 
         with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS outbox (
                     id TEXT PRIMARY KEY,
@@ -40,7 +42,8 @@ class OutboxSeguridad:
                     ultimo_error TEXT,
                     actualizado TEXT NOT NULL
                         DEFAULT CURRENT_TIMESTAMP,
-                    proximo_intento REAL NOT NULL DEFAULT 0
+                    proximo_intento REAL NOT NULL DEFAULT 0,
+                    es_borrador INTEGER NOT NULL DEFAULT 0
                 )
             """)
 
@@ -57,6 +60,11 @@ class OutboxSeguridad:
                     ALTER TABLE outbox
                     ADD COLUMN proximo_intento
                     REAL NOT NULL DEFAULT 0
+                """)
+
+            if "es_borrador" not in columnas:
+                db.execute("""
+                    ALTER TABLE outbox ADD COLUMN es_borrador INTEGER NOT NULL DEFAULT 0
                 """)
 
     @contextmanager
@@ -85,16 +93,18 @@ class OutboxSeguridad:
         """Guarda un mensaje sin duplicar su ID."""
 
         with self._db() as db:
-            cursor = db.execute(
-                """
-                INSERT OR IGNORE INTO outbox
-                    (id, topico, payload)
-                VALUES (?, ?, ?)
-                """,
-                (id, topico, payload),
-            )
+            return self.guardar_en(db, id, topico, payload)
 
-            return cursor.rowcount == 1
+    def guardar_en(self, db: sqlite3.Connection, id: str, topico: str, payload: str) -> bool:
+        """Inserta en el carril de esta instancia dentro de una transacción externa."""
+        cursor = db.execute(
+            """
+            INSERT OR IGNORE INTO outbox (id, topico, payload, es_borrador)
+            VALUES (?, ?, ?, ?)
+            """,
+            (id, topico, payload, self.borradores),
+        )
+        return cursor.rowcount == 1
 
     def reclamar(self) -> dict | None:
         """Reserva un mensaje elegible para publicar."""
@@ -109,12 +119,13 @@ class OutboxSeguridad:
                 SELECT id, topico, payload
                 FROM outbox
                 WHERE estado = 'pendiente'
+                  AND es_borrador = ?
                   AND intentos < ?
                   AND proximo_intento <= ?
                 ORDER BY proximo_intento, rowid
                 LIMIT 1
                 """,
-                (self.MAX_INTENTOS, ahora),
+                (self.borradores, self.MAX_INTENTOS, ahora),
             ).fetchone()
 
             if fila is None:
@@ -146,8 +157,9 @@ class OutboxSeguridad:
                     actualizado = CURRENT_TIMESTAMP
                 WHERE id = ?
                   AND estado = 'enviando'
+                  AND es_borrador = ?
                 """,
-                (id,),
+                (id, self.borradores),
             )
 
             return cursor.rowcount == 1
@@ -164,8 +176,9 @@ class OutboxSeguridad:
                 FROM outbox
                 WHERE id = ?
                   AND estado = 'enviando'
+                  AND es_borrador = ?
                 """,
-                (id,),
+                (id, self.borradores),
             ).fetchone()
 
             if fila is None:
@@ -206,8 +219,7 @@ class OutboxSeguridad:
     def recuperar(self) -> int:
         """Recupera publicaciones interrumpidas.
 
-        Solo debe ejecutarse cuando no hay otro
-        publicador utilizando esta outbox.
+        Solo debe ejecutarse cuando no hay otro publicador en el mismo carril.
         """
 
         with self._db() as db:
@@ -217,7 +229,9 @@ class OutboxSeguridad:
                 SET estado = 'pendiente',
                     actualizado = CURRENT_TIMESTAMP
                 WHERE estado = 'enviando'
-                """
+                  AND es_borrador = ?
+                """,
+                (self.borradores,),
             )
 
             return cursor.rowcount
@@ -231,7 +245,9 @@ class OutboxSeguridad:
                 SELECT COUNT(*) AS total
                 FROM outbox
                 WHERE estado = 'pendiente'
-                """
+                  AND es_borrador = ?
+                """,
+                (self.borradores,),
             ).fetchone()
 
             return fila["total"]
@@ -245,9 +261,10 @@ class OutboxSeguridad:
                 SELECT COUNT(*) AS total
                 FROM outbox
                 WHERE estado = 'pendiente'
+                  AND es_borrador = ?
                   AND intentos >= ?
                 """,
-                (self.MAX_INTENTOS,),
+                (self.borradores, self.MAX_INTENTOS),
             ).fetchone()
 
             return fila["total"]
@@ -269,9 +286,10 @@ class OutboxSeguridad:
                     actualizado = CURRENT_TIMESTAMP
                 WHERE id = ?
                   AND estado = 'pendiente'
+                  AND es_borrador = ?
                   AND intentos >= ?
                 """,
-                (id, self.MAX_INTENTOS),
+                (id, self.borradores, self.MAX_INTENTOS),
             )
 
             return cursor.rowcount == 1

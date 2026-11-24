@@ -13,8 +13,10 @@ def completar_con_alertas(
     nota_id: str,
     eventos: list[EventoSistema],
     tablet: MensajeTablet | None,
+    *,
+    transcripcion: str | None = None,
 ) -> bool:
-    """Guarda alertas y completa la nota en una transacción.
+    """Guarda alertas, la transcripción opcional y el cierre en un solo commit.
 
     Requiere que notas y outbox estén en el mismo archivo SQLite.
     """
@@ -79,11 +81,16 @@ def completar_con_alertas(
             """
             UPDATE notas
             SET estado = 'completada',
+                transcripcion = ?,
                 ultimo_error = NULL,
                 actualizado = CURRENT_TIMESTAMP
             WHERE id = ? AND estado = 'procesando'
             """,
-            (nota_id,),
+            (transcripcion, nota_id),
         )
 
-        return cursor.rowcount == 1
+        if cursor.rowcount != 1:
+            db.rollback()
+            return False
+
+        return True
