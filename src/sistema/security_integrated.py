@@ -26,6 +26,9 @@ from sistema.security_persistent_processor import (
     crear_procesador_persistente,
 )
 from sistema.outbox_worker import WorkerOutbox
+from sistema.part_context import ClientePlanta
+from sistema.part_store import AlmacenPartes
+from sistema.part_worker import WorkerPartes
 from sistema.whisper_adapter import WhisperLocal
 
 
@@ -73,6 +76,10 @@ def main():
 
     almacen = AlmacenNotas(ruta)
     outbox = OutboxSeguridad(ruta)
+    outbox_borradores = OutboxSeguridad(ruta, borradores=True)
+    planta = ClientePlanta(os.getenv("PLANTA_API_URL", "http://localhost:8100"))
+    partes = AlmacenPartes(almacen, outbox_borradores)
+    worker_partes = WorkerPartes(partes, planta.catalogo, historial=planta.historial)
 
     logger.info("Base SQLite: %s", ruta)
     logger.info("Notas pendientes: %s", almacen.pendientes())
@@ -105,6 +112,7 @@ def main():
 
     cliente = None
     worker_outbox = None
+    worker_borradores = None
     hilo_heartbeat = None
 
     detener_heartbeat = threading.Event()
@@ -119,6 +127,7 @@ def main():
 
         cliente = conectar_mqtt(
             encolar_nota=entrada,
+            encolar_respuesta=partes.guardar_respuesta,
         )
 
         cliente.loop_start()
@@ -141,6 +150,10 @@ def main():
                 espera_error=3.0,
             )
             worker_outbox.iniciar()
+            worker_borradores = WorkerOutbox(outbox=outbox_borradores, cliente=cliente)
+            worker_borradores.iniciar()
+
+        worker_partes.iniciar()
 
         logger.info("Sistema integrado iniciado")
 
@@ -156,6 +169,12 @@ def main():
 
     finally:
         detener_sistema.set()
+
+        if not worker_partes.detener():
+            logger.error("Worker de partes sigue activo")
+
+        if worker_borradores is not None and not worker_borradores.detener():
+            logger.error("Publicador de borradores sigue activo")
 
         # Detener publicaciones de seguridad.
         if worker_outbox is not None:

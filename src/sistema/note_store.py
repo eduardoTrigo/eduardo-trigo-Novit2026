@@ -25,6 +25,7 @@ class AlmacenNotas:
 
     def _crear_tabla(self):
         with self._conectar() as db:
+            db.execute("BEGIN IMMEDIATE")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS notas (
                     id TEXT PRIMARY KEY,
@@ -39,7 +40,8 @@ class AlmacenNotas:
                     ultimo_error TEXT,
                     actualizado TEXT NOT NULL
                         DEFAULT CURRENT_TIMESTAMP,
-                    proximo_intento REAL NOT NULL DEFAULT 0
+                    proximo_intento REAL NOT NULL DEFAULT 0,
+                    transcripcion TEXT
                 )
             """)
 
@@ -57,14 +59,18 @@ class AlmacenNotas:
                     REAL NOT NULL DEFAULT 0
                 """)
 
+            if "transcripcion" not in columnas:
+                db.execute("ALTER TABLE notas ADD COLUMN transcripcion TEXT")
+
     def guardar(self, nota: NotaRecorrida) -> bool:
+        solo_evidencia = nota.id.startswith("VIVO-") and not nota.audio_url
         with self._conectar() as db:
             cursor = db.execute(
                 """
-                INSERT OR IGNORE INTO notas (id, payload)
-                VALUES (?, ?)
+                INSERT OR IGNORE INTO notas (id, payload, estado)
+                VALUES (?, ?, ?)
                 """,
-                (nota.id, nota.model_dump_json()),
+                (nota.id, nota.model_dump_json(), "completada" if solo_evidencia else "pendiente"),
             )
             return cursor.rowcount == 1
 
@@ -186,6 +192,20 @@ class AlmacenNotas:
             ).fetchone()
 
             return fila["estado"] if fila else None
+
+    def obtener_transcripcion(self, nota_id: str) -> str | None:
+        """Lee el texto duradero de una nota completada, si lo tiene."""
+        with self._conectar() as db:
+            fila = db.execute(
+                """
+                SELECT transcripcion
+                FROM notas
+                WHERE id = ? AND estado = 'completada'
+                """,
+                (nota_id,),
+            ).fetchone()
+
+            return fila["transcripcion"] if fila else None
 
     def pendientes(self) -> int:
         """Cuenta notas pendientes, incluso las bloqueadas."""

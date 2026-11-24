@@ -89,3 +89,39 @@ def test_mqtt_entrega_nota_al_router(monkeypatch):
     nota = encolar.call_args.args[0]
 
     assert nota.id == "NOTA-00001"
+
+
+def test_mqtt_respuestas_estrictas_y_resuscripcion(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import call
+
+    from planta_contrato import RespuestaOperador
+    from sistema.mqtt_client import conectar_mqtt
+    from test_security_messages import crear_nota
+
+    cliente = MagicMock()
+    cliente.subscribe.return_value = (mqtt.MQTT_ERR_SUCCESS, 1)
+    monkeypatch.setattr(mqtt, "Client", MagicMock(return_value=cliente))
+    guardar_respuesta = MagicMock(return_value=True)
+    guardar_nota = MagicMock(return_value=True)
+    conectar_mqtt(encolar_nota=guardar_nota, encolar_respuesta=guardar_respuesta)
+
+    cliente.on_connect(cliente, None, None, 0, None)
+    cliente.on_disconnect(cliente, None, None, 0, None)
+    assert not cliente.conectado.is_set()
+    cliente.on_connect(cliente, None, None, 0, None)
+    assert cliente.subscribe.call_args_list == [
+        call(Topicos.RECORRIDAS), call(Topicos.RESPUESTAS, qos=1),
+    ] * 2
+
+    nota = crear_nota()
+    r = RespuestaOperador(id="R1", ts=nota.ts, mensaje_id="PARTE-NOTA-00001-1",
+                          operador=nota.operador, texto="Sí, confirmo.", audio_url=None)
+    for payload in (b"no-json", r.model_copy(update={"texto": 1}).model_dump_json(
+        warnings=False).encode(), r.model_dump_json().replace('"id":', '"extra":0,"id":').encode()):
+        cliente.on_message(cliente, None, SimpleNamespace(topic=Topicos.RESPUESTAS, payload=payload))
+    guardar_respuesta.assert_not_called()
+    cliente.on_message(cliente, None, SimpleNamespace(topic=Topicos.RESPUESTAS,
+                                                      payload=r.model_dump_json().encode()))
+    guardar_respuesta.assert_called_once_with(r)
+    guardar_nota.assert_not_called()
