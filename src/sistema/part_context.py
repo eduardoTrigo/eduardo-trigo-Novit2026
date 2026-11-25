@@ -1,15 +1,20 @@
 """Catálogo, rangos históricos y límites publicados por la planta."""
 
 import math
+import time
 from datetime import datetime, timedelta
 
 import httpx
 from planta_contrato import FilaParte
 
+from sistema.b1_events import ruta_foto_valida
+from sistema.part_extraction import convertir_presion
+
 
 _VENTANA = timedelta(days=45)
-_PRESION_EN_KG = {"kg/cm2": 1.0, "psi": 1 / 14.2233, "bar": 1 / 0.980665}
 _VARIABLE_SENSOR = {"presion_descarga_local": "presion_descarga"}
+MAX_BYTES_FOTO_B1 = 512 * 1024
+_FIRMAS_FOTO = {"image/jpeg": b"\xff\xd8\xff", "image/png": b"\x89PNG\r\n\x1a\n"}
 
 
 class ClientePlanta:
@@ -17,27 +22,65 @@ class ClientePlanta:
         self.url = url.rstrip("/")
         self._catalogo = None
 
-    def catalogo(self) -> dict:
-        if self._catalogo is None:
-            respuesta = httpx.get(f"{self.url}/api/planta", timeout=2.0)
+    def catalogo(self, *, requerir_sensores: bool = False) -> dict:
+        cacheado = self._catalogo
+        if cacheado is not None and (not requerir_sensores or "sensores" in cacheado):
+            return cacheado
+        respuesta = httpx.get(f"{self.url}/api/planta", timeout=2.0)
+        respuesta.raise_for_status()
+        datos = respuesta.json()
+        if not isinstance(datos, dict) or not isinstance(datos.get("equipos"), list):
+            raise ValueError("Catálogo de equipos inválido")
+        if not datos["equipos"]:
+            raise ValueError("Catálogo de equipos vacío")
+        if (requerir_sensores or "sensores" in datos) and not isinstance(datos.get("sensores"), list):
+            raise ValueError("Catálogo de sensores inválido")
+        self._catalogo = datos
+        return datos
+
+    def estado_operativo(self) -> dict:
+        respuesta = httpx.get(f"{self.url}/api/estado", timeout=2.0)
+        respuesta.raise_for_status()
+        datos = respuesta.json()
+        if not isinstance(datos, dict):
+            raise ValueError("Estado operativo inválido")
+        return datos
+
+    def foto_b1(self, ruta: str) -> tuple[str, bytes]:
+        if not ruta_foto_valida(ruta):
+            raise ValueError("Ruta de foto B1 no autorizada")
+        vencimiento = time.monotonic() + 3
+        with httpx.stream("GET", self.url + ruta, timeout=2.0, follow_redirects=False,
+                          headers={"Accept-Encoding": "identity"}) as respuesta:
             respuesta.raise_for_status()
-            datos = respuesta.json()
-            if not isinstance(datos, dict) or not isinstance(datos.get("equipos"), list):
-                raise ValueError("Catálogo de equipos inválido")
-            if not datos["equipos"]:
-                raise ValueError("Catálogo de equipos vacío")
-            if not isinstance(datos.get("sensores", []), list):
-                raise ValueError("Catálogo de sensores inválido")
-            self._catalogo = datos
+            mime = respuesta.headers.get("content-type", "").split(";")[0].strip().lower()
+            firma = _FIRMAS_FOTO.get(mime)
+            if firma is None or respuesta.headers.get("content-encoding", "identity") != "identity":
+                raise ValueError("Formato de foto B1 no admitido")
+            longitud = int(respuesta.headers.get("content-length", "0"))
+            if not 0 <= longitud <= MAX_BYTES_FOTO_B1:
+                raise ValueError("Tamaño declarado de foto B1 inválido")
+            contenido = bytearray()
+            for bloque in respuesta.iter_bytes(chunk_size=16 * 1024):
+                if time.monotonic() > vencimiento:
+                    raise httpx.ReadTimeout("Plazo de descarga de foto B1 agotado")
+                if len(contenido) + len(bloque) > MAX_BYTES_FOTO_B1:
+                    raise ValueError("Foto B1 supera el límite de tamaño")
+                contenido.extend(bloque)
+            if not contenido.startswith(firma):
+                raise ValueError("Firma de foto B1 inválida")
+            return mime, bytes(contenido)
 
-        return self._catalogo
-
-    def historial(self, tag: str, variable: str, hasta: datetime) -> list[dict]:
-        if hasta.utcoffset() is None:
+    def historial(self, tag: str, variable: str, hasta: datetime, *, desde: datetime | None = None) -> list[dict]:
+        if hasta.utcoffset() is None or (desde is not None and desde.utcoffset() is None):
             raise ValueError("El historian requiere fechas con zona horaria")
-        parametros = {"desde": (hasta - _VENTANA).isoformat(), "hasta": hasta.isoformat()}
+        inicio = hasta - _VENTANA if desde is None else desde
+        if inicio > hasta:
+            raise ValueError("Intervalo de historian invertido")
+        parametros = {"desde": inicio.isoformat(), "hasta": hasta.isoformat()}
         url = f"{self.url}/api/historian/{tag}/{variable}"
-        for intento in range(2):
+        intentos = 2 if desde is None else 1
+        for intento in range(intentos):
             try:
                 respuesta = httpx.get(url, params=parametros, timeout=2.0)
                 respuesta.raise_for_status()
@@ -46,7 +89,7 @@ class ClientePlanta:
                     raise ValueError("Respuesta del historian inválida")
                 return muestras
             except (httpx.TimeoutException, httpx.NetworkError):
-                if intento == 1:
+                if intento == intentos - 1:
                     raise
 
 
@@ -85,11 +128,8 @@ def verificar_lectura(fila: FilaParte, ts: datetime, catalogo: dict, historial) 
         return evidencia
 
     unidad = sensor["unidad"]
-    if fila.unidad == unidad:
-        valor = fila.valor
-    elif fila.unidad in _PRESION_EN_KG and unidad in _PRESION_EN_KG:
-        valor = fila.valor * _PRESION_EN_KG[fila.unidad] / _PRESION_EN_KG[unidad]
-    else:
+    valor = fila.valor if fila.unidad == unidad else convertir_presion(fila.valor, fila.unidad, unidad)
+    if valor is None and fila.unidad != unidad:
         evidencia["historico"] = {"estado": "unidad_incompatible"}
         return evidencia
 

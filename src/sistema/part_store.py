@@ -10,6 +10,7 @@ from planta_contrato import FilaParte, MensajeTablet, NotaRecorrida, RespuestaOp
 from pydantic import TypeAdapter
 
 from sistema.note_store import AlmacenNotas
+from sistema.part_classification_store import crear_tablas_b1, registrar_confirmacion_b1
 from sistema.part_extraction import normalizar_texto
 from sistema.security_outbox import OutboxSeguridad
 
@@ -121,6 +122,7 @@ class AlmacenPartes:
             if "interacciones" not in columnas:
                 db.execute("ALTER TABLE partes ADD COLUMN interacciones INTEGER NOT NULL DEFAULT 0")
                 self._migrar_interacciones(db)
+            crear_tablas_b1(db)
 
     def _migrar_interacciones(self, db: sqlite3.Connection) -> None:
         db.execute("""
@@ -335,6 +337,8 @@ class AlmacenPartes:
             elif duplicada:
                 resultado = "duplicada"
             elif resultado != "requiere_stt":
+                if resultado == "confirmada" and estado != "borrador_pendiente":
+                    resultado = "insuficiente"
                 interacciones += 1
                 if contexto is not None:
                     contexto_json = json.dumps(contexto, ensure_ascii=False)
@@ -364,4 +368,6 @@ class AlmacenPartes:
             )
             if aplicada.rowcount != 1:
                 raise sqlite3.IntegrityError(f"No se registró la respuesta: {respuesta.id}")
+            if resultado == "confirmada":
+                registrar_confirmacion_b1(db, nota_id, version, vigente, respuesta.id, filas_json)
             return True

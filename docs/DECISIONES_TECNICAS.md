@@ -19,10 +19,10 @@ Este registro conserva el motivo y el estado de cada decisión. El seguimiento d
 
 ## DT-03 · Conservar SQLite e integrar PostgreSQL 16 con pgvector
 
-- **Estado** · Adoptada la conservación temporal de SQLite. Pendiente la integración de PostgreSQL y pgvector.
+- **Estado** · Adoptada la conservación temporal de SQLite. PostgreSQL 16 con pgvector y memoria de conversación será la próxima prioridad tras cerrar B1.
 - **Contexto y justificación** · SQLite sostiene la persistencia de notas y la outbox transaccional. El Anexo exige Postgres dentro de Compose, memoria de la conversación y el índice vectorial. Se incorporarán esas capacidades sin reemplazar por anticipado la persistencia de seguridad.
 - **Riesgo** · Dos almacenes requieren definir qué datos pertenecen a cada uno, cómo se recuperan y qué presupuesto de recursos consumen. Cualquier migración del circuito actual requiere su propia validación.
-- **Evidencia** · [Transacción SQLite](../src/sistema/security_transaction.py), [Compose actual](../docker-compose.yml) y [Anexo citado en el plan](PLAN.md#fuentes-y-línea-de-base).
+- **Evidencia** · La corrida del Issue #13 registró decisiones y envíos B1 en SQLite. Su traslado requiere preservar las claves de deduplicación y las transacciones que agrupan confirmación, trabajo, evidencia y outbox. [Evaluación B1](EVALUACION_B1.md) · [Transacción SQLite](../src/sistema/security_transaction.py) · [Anexo citado en el plan](PLAN.md#fuentes-y-línea-de-base)
 - **Referencia** · [#7](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/issues/7) y futuro Issue de parte por voz y memoria.
 
 ## DT-04 · Usar GitHub Issues, PLAN.md, Codex y revisión humana

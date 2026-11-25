@@ -42,10 +42,16 @@ El heartbeat corre en un hilo del entrypoint separado de los workers. Cuando MQT
 
 [main.py](../src/sistema/main.py), [security_runtime.py](../src/sistema/security_runtime.py), [security_worker.py](../src/sistema/security_worker.py), [security_processor.py](../src/sistema/security_processor.py), [security_publisher.py](../src/sistema/security_publisher.py) y los scripts de humo son puntos de entrada o rutas alternativas. El servicio de Compose usa el circuito persistente descrito arriba. La evidencia de auditoría y sus límites se registran en el [plan](PLAN.md).
 
+## B1 en el Issue #13
+
+El entrypoint de Compose suscribe lecturas de sensores y energía y entrega las tramas a un worker separado. Los partes confirmados generan un trabajo en la misma transacción que guarda la respuesta definitiva. Sensores y partes producen decisiones persistidas por equipo. El worker de eventos valida `EventoSistema` y guarda el payload y su evidencia mínima en una transacción SQLite. Los carriles de seguridad, tablet y B1 tienen publicadores independientes que confirman QoS 1 tras el ACK de MQTT. El enriquecimiento añade tendencias y fotos fuera de esa transacción. [Diseño B1](SPEC_CLASIFICACION_B1.md)
+
+La corrida oficial obtuvo 75,0/100 y B1 5,83/10 en los dos escenarios obligatorios. Conservó B2, F1, F2 y las eliminatorias y registró dos bloqueos de SQLite en el procesamiento de sensores y el encolado B1. El ensayo con broker real y fuentes de planta controladas corroboró recuperación de episodios, evidencia y envío pendiente. La cobertura de alertas por voz bajo saturación sigue abierta. [Evaluación B1](EVALUACION_B1.md)
+
 ## Arquitectura propuesta para completar Entrega 1
 
 - **Parte de voz y tablet.** Agregar extracción validada a `FilaParte` a partir de la transcripción y de los datos de planta e historian. Descargar y asociar las fotos. Publicar el borrador en la tablet, procesar `planta/respuestas` y conservar la confirmación. Integrar este flujo sin demorar la alerta local.
-- **Detección y clasificación B1 · obligatorias en Entrega 1.** Procesar partes confirmados y desvíos de `planta/sensores/#`. Aplicar límites oficiales con reglas deterministas en código y emitir `SinNovedad` o `Escalado` con evidencia. Derivar del estado efectivo del sistema los campos de enlace y pendientes del latido.
+- **Estado de enlace y pendientes.** Derivar del estado efectivo del sistema los campos de enlace y pendientes del latido.
 - **PostgreSQL 16 y pgvector.** Incorporar PostgreSQL a Compose para persistir la conversación del parte y alojar el índice documental. Conservar temporalmente SQLite para notas y outbox de seguridad mientras se valida cualquier cambio de persistencia de ese circuito.
 - **Tools y MCP.** Incorporar herramientas de solo lectura con esquemas Pydantic estrictos sobre fuentes oficiales. Exponer al menos una por MCP y reutilizar su contrato de consulta.
 - **RAG y armado de contexto.** Indexar el corpus con metadatos y vigencia. Recuperar y citar secciones aplicables. El contexto combinará documentación con datos operativos de API o SQL para límites y stock.
