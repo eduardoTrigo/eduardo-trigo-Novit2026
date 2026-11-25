@@ -97,17 +97,26 @@ def _unidad(unidad: str) -> str:
     return normalizar_unidad(unidad) or normalizar_texto(unidad.strip())
 
 
-def _interpretar_clausula(texto: str, patrones: Mapping[str, str]) -> tuple[str | None, bool | None]:
-    for hallazgo, patron in patrones.items():
-        coincidencia = re.search(rf"\b(?:{patron})\b", texto)
-        if coincidencia is None:
-            continue
-        negado = coincidencia.groupdict().get("negacion") or _NEGACION.search(texto[:coincidencia.start()])
-        # La frase de cavitación incluye «como si» como descripción del sonido.
-        if _DUDA.search(texto.replace("como si", "como")):
-            return hallazgo, None
-        return hallazgo, not negado
-    return None, None
+def _interpretar_clausula(
+    texto: str, patrones: Mapping[str, str],
+) -> Iterable[tuple[str | None, bool | None]]:
+    coincidencias = [
+        (coincidencia, hallazgo)
+        for hallazgo, patron in patrones.items()
+        for coincidencia in re.finditer(rf"\b(?:{patron})\b", texto)
+    ]
+    if not coincidencias:
+        yield None, None
+        return
+
+    # La frase de cavitación incluye «como si» como descripción del sonido.
+    duda = _DUDA.search(texto.replace("como si", "como"))
+    fin_anterior = 0
+    for coincidencia, hallazgo in sorted(coincidencias, key=lambda par: par[0].start()):
+        prefijo = texto[fin_anterior:coincidencia.start()]
+        negado = coincidencia.groupdict().get("negacion") or _NEGACION.search(prefijo)
+        fin_anterior = coincidencia.end()
+        yield hallazgo, None if duda else not negado
 
 
 def _observaciones(fila: FilaParte) -> Iterable[EvidenciaB1]:
@@ -119,23 +128,24 @@ def _observaciones(fila: FilaParte) -> Iterable[EvidenciaB1]:
     for union, clausula in zip(["", *partes[1::2]], partes[::2]):
         if not clausula.strip():
             continue
-        hallazgo, afirmado = _interpretar_clausula(clausula, patrones)
-        if union == "ni" and afirmado is True:
-            afirmado = False
-        elif union == "y" and anterior_negada and afirmado is True:
-            afirmado = None
-        anterior_negada = afirmado is False
-        if afirmado is None or (afirmado and hallazgo == "goteo_sin_calificar"):
-            yield _evidencia(fila, "observacion_no_resuelta", "Indeterminado", hallazgo=hallazgo)
-        elif not afirmado and hallazgo in _OPERACION:
-            yield _evidencia(fila, "estado_operativo_negado", "Indeterminado", hallazgo=hallazgo)
-        elif not afirmado:
-            yield _evidencia(fila, "hallazgo_negado", "SinNovedad", hallazgo=hallazgo)
-        elif hallazgo in _OPERACION:
-            resultado = "SinNovedad" if hallazgo in _PARADAS else None
-            yield _evidencia(fila, "estado_operativo_informado", resultado, hallazgo=hallazgo)
-        else:
-            yield _evidencia(fila, "hallazgo_afirmado", "Escalado", hallazgo=hallazgo)
+        for hallazgo, afirmado in _interpretar_clausula(clausula, patrones):
+            if union == "ni" and afirmado is True:
+                afirmado = False
+            elif union == "y" and anterior_negada and afirmado is True:
+                afirmado = None
+            union = ""
+            anterior_negada = afirmado is False
+            if afirmado is None or (afirmado and hallazgo == "goteo_sin_calificar"):
+                yield _evidencia(fila, "observacion_no_resuelta", "Indeterminado", hallazgo=hallazgo)
+            elif not afirmado and hallazgo in _OPERACION:
+                yield _evidencia(fila, "estado_operativo_negado", "Indeterminado", hallazgo=hallazgo)
+            elif not afirmado:
+                yield _evidencia(fila, "hallazgo_negado", "SinNovedad", hallazgo=hallazgo)
+            elif hallazgo in _OPERACION:
+                resultado = "SinNovedad" if hallazgo in _PARADAS else None
+                yield _evidencia(fila, "estado_operativo_informado", resultado, hallazgo=hallazgo)
+            else:
+                yield _evidencia(fila, "hallazgo_afirmado", "Escalado", hallazgo=hallazgo)
 
 
 def _contradicciones(observaciones: list[EvidenciaB1]) -> set[str]:

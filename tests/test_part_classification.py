@@ -134,6 +134,49 @@ def test_interpretacion_cualitativa_acotada(catalogo, variable, texto, resultado
     assert all(e.observacion == texto for e in d.evidencia)
 
 
+@pytest.mark.parametrize(("texto", "resultado", "hallazgos"), [
+    (
+        "B-101 tiene ruido raro de rodamiento sin golpeteo metálico",
+        "Escalado",
+        [("ruido_rodamiento", "hallazgo_afirmado"), ("golpeteo", "hallazgo_negado")],
+    ),
+    (
+        "Sin golpeteo metálico presenta ruido raro de rodamiento",
+        "Escalado",
+        [("golpeteo", "hallazgo_negado"), ("ruido_rodamiento", "hallazgo_afirmado")],
+    ),
+    (
+        "Tiene golpeteo metálico sin ruido raro de rodamiento",
+        "Escalado",
+        [("golpeteo", "hallazgo_afirmado"), ("ruido_rodamiento", "hallazgo_negado")],
+    ),
+    (
+        "Sin ruido raro de rodamiento presenta golpeteo metálico",
+        "Escalado",
+        [("ruido_rodamiento", "hallazgo_negado"), ("golpeteo", "hallazgo_afirmado")],
+    ),
+    (
+        "Sin golpeteo metálico sin ruido raro de rodamiento",
+        "SinNovedad",
+        [("golpeteo", "hallazgo_negado"), ("ruido_rodamiento", "hallazgo_negado")],
+    ),
+    (
+        "Tiene ruido raro de rodamiento con golpeteo metálico",
+        "Escalado",
+        [("ruido_rodamiento", "hallazgo_afirmado"), ("golpeteo", "hallazgo_afirmado")],
+    ),
+    (
+        "Tiene golpeteo metálico sin golpeteo metálico",
+        "Indeterminado",
+        [("golpeteo", "observacion_contradictoria"), ("golpeteo", "observacion_contradictoria")],
+    ),
+])
+def test_evalua_cada_hallazgo_y_su_negacion_en_la_misma_clausula(catalogo, texto, resultado, hallazgos):
+    d = decision(catalogo, observacion(texto, "ruido"))
+    assert d.resultado == resultado
+    assert [(e.hallazgo, e.motivo) for e in d.evidencia] == hallazgos
+
+
 def test_observaciones_contradictorias_del_mismo_hallazgo(catalogo):
     afirma = observacion("Hace un golpeteo metálico", "ruido")
     niega = observacion("No hace un golpeteo metálico", "ruido")
