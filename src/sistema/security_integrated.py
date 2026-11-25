@@ -11,8 +11,12 @@ PIA3_ENABLE_OUTBOX=1.
 import logging
 import os
 import threading
+from functools import partial
 from pathlib import Path
 
+from sistema.b1_event_store import AlmacenEventosB1
+from sistema.b1_event_worker import WorkerEventosB1
+from sistema.b1_evidence import EnriquecedorB1
 from sistema.mqtt_client import (
     conectar_mqtt,
     publicar_estado,
@@ -26,9 +30,13 @@ from sistema.security_persistent_processor import (
     crear_procesador_persistente,
 )
 from sistema.outbox_worker import WorkerOutbox
+from sistema.part_classification_store import AlmacenClasificacionB1
+from sistema.part_classification_worker import WorkerClasificacionB1
 from sistema.part_context import ClientePlanta
 from sistema.part_store import AlmacenPartes
 from sistema.part_worker import WorkerPartes
+from sistema.sensor_store import AlmacenSensoresB1
+from sistema.sensor_worker import WorkerSensoresB1
 from sistema.transcription_service import TranscripcionPrioritaria
 from sistema.whisper_adapter import WhisperLocal
 
@@ -78,6 +86,7 @@ def main():
     almacen = AlmacenNotas(ruta)
     outbox = OutboxSeguridad(ruta)
     outbox_borradores = OutboxSeguridad(ruta, borradores=True)
+    outbox_b1 = OutboxSeguridad(ruta, b1=True)
     planta = ClientePlanta(os.getenv("PLANTA_API_URL", "http://localhost:8100"))
     partes = AlmacenPartes(almacen, outbox_borradores)
 
@@ -98,6 +107,13 @@ def main():
         partes, planta.catalogo, historial=planta.historial,
         transcribir_respuesta=motor.transcribir_respuesta, hay_seguridad=almacen.hay_seguridad_lista,
     )
+    worker_b1 = WorkerClasificacionB1(
+        AlmacenClasificacionB1(almacen.ruta), partial(planta.catalogo, requerir_sensores=True),
+    )
+    sensores = AlmacenSensoresB1(almacen.ruta, os.getenv("PIA3_SENSOR_EPOCH", "local"))
+    worker_sensores = WorkerSensoresB1(sensores, planta)
+    eventos_b1 = AlmacenEventosB1(outbox_b1)
+    worker_eventos_b1 = WorkerEventosB1(eventos_b1, EnriquecedorB1(eventos_b1, planta))
 
     procesador = crear_procesador_persistente(
         almacen=almacen,
@@ -117,6 +133,7 @@ def main():
     cliente = None
     worker_outbox = None
     worker_borradores = None
+    worker_publicacion_b1 = None
     hilo_heartbeat = None
 
     detener_heartbeat = threading.Event()
@@ -132,6 +149,8 @@ def main():
         cliente = conectar_mqtt(
             encolar_nota=entrada,
             encolar_respuesta=partes.guardar_respuesta,
+            encolar_sensor=worker_sensores.encolar,
+            discontinuidad_sensores=worker_sensores.marcar_discontinuidad,
         )
 
         cliente.loop_start()
@@ -158,6 +177,12 @@ def main():
             worker_borradores.iniciar()
 
         worker_partes.iniciar()
+        worker_b1.iniciar()
+        worker_sensores.iniciar()
+        worker_eventos_b1.iniciar()
+        if publicar:
+            worker_publicacion_b1 = WorkerOutbox(outbox=outbox_b1, cliente=cliente)
+            worker_publicacion_b1.iniciar()
 
         logger.info("Sistema integrado iniciado")
 
@@ -176,6 +201,18 @@ def main():
 
         if not worker_partes.detener():
             logger.error("Worker de partes sigue activo")
+
+        if not worker_b1.detener():
+            logger.error("Worker de clasificación B1 sigue activo")
+
+        if not worker_sensores.detener():
+            logger.error("Worker de sensores B1 sigue activo")
+
+        if not worker_eventos_b1.detener():
+            logger.error("Worker de eventos B1 sigue activo")
+
+        if worker_publicacion_b1 is not None and not worker_publicacion_b1.detener():
+            logger.error("Publicador B1 sigue activo")
 
         if worker_borradores is not None and not worker_borradores.detener():
             logger.error("Publicador de borradores sigue activo")

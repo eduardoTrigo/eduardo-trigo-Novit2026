@@ -40,6 +40,33 @@ def mensaje(outbox):
     return MensajeTablet.model_validate_json(outbox.reclamar()["payload"])
 
 
+@pytest.mark.parametrize(("texto", "estado"), [
+    (
+        "La 1 está en 112 kilogramos de descarga el rodamiento medio 59 grados con la pistola, "
+        "ambien la bomba está en 1610 pc y de descarga, el filtro a medio 1,3 de diferencial.",
+        "aclaracion_pendiente",
+    ),
+    (
+        "La 1 estar en 102 kilogramos de descarga el rodamiento medio 59 grados con la pistola, "
+        "ambiana bomba está en 1610 pc y de descarga, el filtro a medio 1,3 de diferencial.",
+        "revision_manual",
+    ),
+], ids=["transcripcion-issue11", "transcripcion-5b"])
+def test_aclaracion_depende_de_referencia_de_equipo_en_transcripcion(tmp_path, texto, estado):
+    nota, outbox, partes, _ = iniciar(tmp_path, texto)
+    turno = partes.obtener(nota.id)
+    assert turno.estado == estado
+    assert [(f.tag, f.variable, f.valor, f.unidad) for f in turno.filas] == [
+        ("F-201A", "presion_diferencial", 1.3, "kg/cm2"),
+    ]
+    if estado == "aclaracion_pendiente":
+        pregunta = mensaje(outbox)
+        assert pregunta.espera_respuesta
+        assert pregunta.pantalla.opciones == ["B-101 · la uno", "B-102 · la dos", "B-103 · la tres"]
+    else:
+        assert outbox.reclamar() is None
+
+
 @pytest.mark.parametrize("texto", ["La bomba está en ciento veinte", "La bomba está en 120 de descarga"])
 def test_equipo_ambiguo_pregunta_con_opciones_oficiales_sin_filas(tmp_path, texto):
     nota, outbox, partes, worker = iniciar(tmp_path, texto)

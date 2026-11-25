@@ -20,6 +20,8 @@ from test_part_clarification import catalogo
 from test_part_messages import preparar
 from test_part_workflow import respuesta, resultado
 from test_security_messages import crear_nota
+from test_sensor_mqtt import mensaje as mensaje_sensor
+from test_sensor_mqtt import preparar as preparar_sensores
 from test_transcription_service import crear_wav_prueba
 
 
@@ -140,3 +142,66 @@ def test_heartbeat_integrado_solicita_intervalo_y_publica_contrato():
         assert envio["topic"] == Topicos.ESTADO and envio["qos"] == 1
         EstadoSistema.model_validate_json(envio["payload"], strict=True)
     print(json.dumps({"prueba": "heartbeat_con_dobles", "publicaciones_validas": 2, "intervalo_configurado_s": 30}))
+
+
+@pytest.mark.parametrize("carga_b1", [False, True], ids=["sin-carga", "cola-saturada"])
+@pytest.mark.parametrize(("texto", "codigo"), [
+    ("¿Hay un choro de agua presión sale agua presión en la bomba?", None),
+    ("Hay oloracas, se siente oloracas.", None),
+    ("Ahí un buen juego, está saliendo un modo de la bomba.", None),
+    ("Hay una persona herida, una persona está lesionada.", "S4"),
+    ("Hay un chorro de agua a presión. Sale agua a presión en la bomba.", "S1"),
+    ("Hay olor a gas. Se siente olor a gas.", "S2"),
+    ("Hay humo y fuego. Está saliendo humo de la bomba.", "S3"),
+    ("Hay una persona herida. Una persona está lesionada.", "S4"),
+], ids=["stt-s1", "stt-s2", "stt-s3", "stt-s4", "referencia-s1", "referencia-s2", "referencia-s3", "referencia-s4"])
+def test_seguridad_por_etapas_con_transcripciones_de_control(tmp_path, monkeypatch, carga_b1, texto, codigo):
+    notas, salida, _, _, _ = preparar(tmp_path)
+    _, _, sensores, _ = preparar_sensores(tmp_path, ruta=notas.ruta, capacidad=1)
+    broker = MagicMock()
+    broker.subscribe.return_value = (mqtt.MQTT_ERR_SUCCESS, 1)
+    broker.publish.return_value.rc = mqtt.MQTT_ERR_SUCCESS
+    broker.publish.return_value.is_published.return_value = True
+    monkeypatch.setattr(mqtt, "Client", lambda **_: broker)
+    cliente = conectar_mqtt(crear_entrada_persistente(notas), encolar_sensor=sensores.encolar)
+    cliente.on_connect(cliente, None, None, 0, None)
+
+    nota = crear_nota()
+    wav = crear_wav_prueba()
+    descargar = MagicMock(return_value=httpx.Response(200, content=wav))
+    cliente_http = httpx.Client
+    monkeypatch.setenv("PLANTA_API_URL", "http://sim:8100")
+    monkeypatch.setattr(httpx, "Client", lambda **opciones: cliente_http(
+        transport=httpx.MockTransport(descargar), **opciones,
+    ))
+    motor = MagicMock()
+    motor.transcribir.return_value = texto
+    procesar = crear_procesador_persistente(notas, motor)
+
+    if carga_b1:
+        for instante in (0, 60, 120):
+            cliente.on_message(cliente, None, mensaje_sensor(instante, 130))
+        assert sensores.perdidas == 2
+    cliente.on_message(cliente, None, SimpleNamespace(
+        topic=Topicos.RECORRIDAS, payload=nota.model_dump_json().encode(),
+    ))
+    assert notas.obtener_estado(nota.id) == "pendiente"
+    assert procesar(notas.reclamar_siguiente())
+    descargar.assert_called_once()
+    assert descargar.call_args.args[0].url.path == nota.audio_url
+    motor.transcribir.assert_called_once_with(wav)
+    assert notas.obtener_estado(nota.id) == "completada"
+    assert notas.obtener_transcripcion(nota.id) == texto
+
+    assert salida.pendientes() == (2 if codigo else 0)
+    if codigo:
+        assert publicar_siguiente(salida, cliente)
+        evento = EventoSistema.model_validate_json(broker.publish.call_args.kwargs["payload"], strict=True)
+        assert evento.id == f"SEG-{nota.id}-{codigo}" and evento.nota_ids == [nota.id]
+        assert publicar_siguiente(salida, cliente)
+        aviso = MensajeTablet.model_validate_json(broker.publish.call_args.kwargs["payload"], strict=True)
+        assert aviso.id == f"TABLET-SEG-{nota.id}" and not aviso.espera_respuesta
+    assert not publicar_siguiente(salida, cliente)
+    assert [c.kwargs["topic"] for c in broker.publish.call_args_list] == (
+        [Topicos.EVENTOS, Topicos.TABLET] if codigo else []
+    )

@@ -56,6 +56,7 @@ _UNIDAD = re.compile(r"(?<!\w)(?:" + "|".join(
     re.escape(u) for u in sorted(_UNIDADES, key=len, reverse=True)
 ) + r")(?!\w)")
 _PRESIONES = {"kg/cm2", "psi", "bar"}
+_PRESION_EN_KG = {"kg/cm2": 1.0, "psi": 1 / 14.2233, "bar": 1 / 0.980665}
 _CUANTITATIVAS = (
     ("presion_descarga_local", "bomba", r"\bdescarga\b", _PRESIONES),
     ("presion_succion", "bomba", r"\bsuccion\b", _PRESIONES),
@@ -238,6 +239,12 @@ def normalizar_unidad(texto: str) -> str | None:
     return _UNIDADES.get(normalizar_texto(texto.strip()))
 
 
+def convertir_presion(valor: float, origen: str, destino: str) -> float | None:
+    if origen in _PRESION_EN_KG and destino in _PRESION_EN_KG:
+        return valor * _PRESION_EN_KG[origen] / _PRESION_EN_KG[destino]
+    return None
+
+
 def unidad_compatible(anterior: str | None, nueva: str) -> bool:
     return anterior == nueva or (anterior in _PRESIONES and nueva in _PRESIONES)
 
@@ -275,6 +282,8 @@ def extraer_parte(texto: str, catalogo: dict) -> ResultadoExtraccion:
     bomba_sin_identificar = False
 
     texto = re.sub(r"\bmenos\s+,", "menos,", normalizar_texto(texto))
+    # La coma de «parada, en reserva» pertenece a la misma observación de estado.
+    texto = re.sub(r"\b(parad[ao]),\s*(en reserva)\b", r"\1 \2", texto)
     for frase in _FRASES.split(texto):
         equipo = None
         candidatos = []

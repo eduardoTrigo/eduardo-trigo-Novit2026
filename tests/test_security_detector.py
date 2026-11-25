@@ -15,6 +15,8 @@ from sistema.security_detector import (
         ("Se siente olor a gas", "S2"),
         ("Sale humo de la bomba", "S3"),
         ("Hay un operador herido", "S4"),
+        ("Hay una persona herida", "S4"),
+        ("La persona está lesionada", "S4"),
     ],
 )
 def test_detectar_condicion_insegura(frase, codigo):
@@ -51,6 +53,10 @@ def test_detectar_multiples_condiciones():
         "No se siente olor a gas",
         "No hay fuego en la sala",
         "No hay un operador herido",
+        "No hay una persona herida",
+        "La persona no está lesionada",
+        "No hay humo ni una persona herida",
+        "Hay una persona cansada",
         "No hay un chorro de agua a presión",
     ],
 )

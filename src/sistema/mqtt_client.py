@@ -15,12 +15,15 @@ from sistema.nota_router import recibir_nota_mqtt
 logger = logging.getLogger(__name__)
 
 INTERVALO_HEARTBEAT = 30
+PREFIJO_SENSORES = Topicos.SENSORES.split("{", 1)[0]
 
 
 def conectar_mqtt(
     encolar_nota: Callable[[NotaRecorrida], bool] | None = None,
     *,
     encolar_respuesta: Callable[[RespuestaOperador], bool] | None = None,
+    encolar_sensor: Callable[[str, bytes], bool] | None = None,
+    discontinuidad_sensores: Callable[[], None] | None = None,
 ) -> mqtt.Client:
     """Configura y conecta el cliente MQTT al broker de PIA-3."""
 
@@ -63,6 +66,12 @@ def conectar_mqtt(
                 if resultado_respuestas != mqtt.MQTT_ERR_SUCCESS:
                     logger.error("Error al suscribirse a %s: %s", Topicos.RESPUESTAS, resultado_respuestas)
 
+            if encolar_sensor is not None:
+                for topico, qos in ((f"{PREFIJO_SENSORES}#", 0), (Topicos.ENERGIA, 1)):
+                    resultado, _ = client.subscribe(topico, qos=qos)
+                    if resultado != mqtt.MQTT_ERR_SUCCESS:
+                        logger.error("Error al suscribirse a %s: %s", topico, resultado)
+
             client.conectado.set()
 
         else:
@@ -78,6 +87,8 @@ def conectar_mqtt(
         """Registra la pérdida de conexión con el broker."""
 
         client.conectado.clear()
+        if discontinuidad_sensores is not None:
+            discontinuidad_sensores()
 
         logger.warning(
             "MQTT desconectado: %s",
@@ -87,6 +98,12 @@ def conectar_mqtt(
     
     def on_message(client, userdata, mensaje):
         """Recibe los mensajes MQTT de la planta."""
+
+        if encolar_sensor is not None and (
+            mensaje.topic.startswith(PREFIJO_SENSORES) or mensaje.topic == Topicos.ENERGIA
+        ):
+            encolar_sensor(mensaje.topic, mensaje.payload)
+            return
 
         if mensaje.topic == Topicos.RESPUESTAS and encolar_respuesta is not None:
             try:

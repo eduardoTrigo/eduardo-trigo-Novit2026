@@ -17,9 +17,12 @@ logger = logging.getLogger(__name__)
 class OutboxSeguridad:
     MAX_INTENTOS = 3
 
-    def __init__(self, ruta: str | Path, *, borradores: bool = False):
+    def __init__(self, ruta: str | Path, *, borradores: bool = False, b1: bool = False):
+        if borradores and b1:
+            raise ValueError("Cada instancia de outbox usa un solo carril")
         self.ruta = Path(ruta)
         self.borradores = borradores
+        self.b1 = b1
         self.ruta.parent.mkdir(
             parents=True,
             exist_ok=True,
@@ -43,7 +46,8 @@ class OutboxSeguridad:
                     actualizado TEXT NOT NULL
                         DEFAULT CURRENT_TIMESTAMP,
                     proximo_intento REAL NOT NULL DEFAULT 0,
-                    es_borrador INTEGER NOT NULL DEFAULT 0
+                    es_borrador INTEGER NOT NULL DEFAULT 0,
+                    es_b1 INTEGER NOT NULL DEFAULT 0
                 )
             """)
 
@@ -66,6 +70,12 @@ class OutboxSeguridad:
                 db.execute("""
                     ALTER TABLE outbox ADD COLUMN es_borrador INTEGER NOT NULL DEFAULT 0
                 """)
+            if "es_b1" not in columnas:
+                db.execute("ALTER TABLE outbox ADD COLUMN es_b1 INTEGER NOT NULL DEFAULT 0")
+            db.execute("""
+                CREATE INDEX IF NOT EXISTS outbox_carril_pendiente
+                ON outbox (es_borrador, es_b1, proximo_intento) WHERE estado = 'pendiente'
+            """)
 
     @contextmanager
     def _db(self):
@@ -99,10 +109,10 @@ class OutboxSeguridad:
         """Inserta en el carril de esta instancia dentro de una transacción externa."""
         cursor = db.execute(
             """
-            INSERT OR IGNORE INTO outbox (id, topico, payload, es_borrador)
-            VALUES (?, ?, ?, ?)
+            INSERT OR IGNORE INTO outbox (id, topico, payload, es_borrador, es_b1)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (id, topico, payload, self.borradores),
+            (id, topico, payload, self.borradores, self.b1),
         )
         return cursor.rowcount == 1
 
@@ -120,12 +130,13 @@ class OutboxSeguridad:
                 FROM outbox
                 WHERE estado = 'pendiente'
                   AND es_borrador = ?
+                  AND es_b1 = ?
                   AND intentos < ?
                   AND proximo_intento <= ?
                 ORDER BY proximo_intento, rowid
                 LIMIT 1
                 """,
-                (self.borradores, self.MAX_INTENTOS, ahora),
+                (self.borradores, self.b1, self.MAX_INTENTOS, ahora),
             ).fetchone()
 
             if fila is None:
@@ -158,8 +169,9 @@ class OutboxSeguridad:
                 WHERE id = ?
                   AND estado = 'enviando'
                   AND es_borrador = ?
+                  AND es_b1 = ?
                 """,
-                (id, self.borradores),
+                (id, self.borradores, self.b1),
             )
 
             return cursor.rowcount == 1
@@ -177,8 +189,9 @@ class OutboxSeguridad:
                 WHERE id = ?
                   AND estado = 'enviando'
                   AND es_borrador = ?
+                  AND es_b1 = ?
                 """,
-                (id, self.borradores),
+                (id, self.borradores, self.b1),
             ).fetchone()
 
             if fila is None:
@@ -230,8 +243,9 @@ class OutboxSeguridad:
                     actualizado = CURRENT_TIMESTAMP
                 WHERE estado = 'enviando'
                   AND es_borrador = ?
+                  AND es_b1 = ?
                 """,
-                (self.borradores,),
+                (self.borradores, self.b1),
             )
 
             return cursor.rowcount
@@ -246,8 +260,9 @@ class OutboxSeguridad:
                 FROM outbox
                 WHERE estado = 'pendiente'
                   AND es_borrador = ?
+                  AND es_b1 = ?
                 """,
-                (self.borradores,),
+                (self.borradores, self.b1),
             ).fetchone()
 
             return fila["total"]
@@ -262,9 +277,10 @@ class OutboxSeguridad:
                 FROM outbox
                 WHERE estado = 'pendiente'
                   AND es_borrador = ?
+                  AND es_b1 = ?
                   AND intentos >= ?
                 """,
-                (self.borradores, self.MAX_INTENTOS),
+                (self.borradores, self.b1, self.MAX_INTENTOS),
             ).fetchone()
 
             return fila["total"]
@@ -287,9 +303,10 @@ class OutboxSeguridad:
                 WHERE id = ?
                   AND estado = 'pendiente'
                   AND es_borrador = ?
+                  AND es_b1 = ?
                   AND intentos >= ?
                 """,
-                (id, self.borradores, self.MAX_INTENTOS),
+                (id, self.borradores, self.b1, self.MAX_INTENTOS),
             )
 
             return cursor.rowcount == 1

@@ -54,7 +54,7 @@ PATRONES_SEGURIDAD = {
     "S4": (
         "Persona lesionada",
         [
-            r"\bpersona lesionada\b",
+            r"\bpersona (?:esta )?(?:lesionada|herida)\b",
             r"\boperador herido\b",
             r"\btecnico herido\b",
             r"\bhay un herido\b",
@@ -104,7 +104,7 @@ def esta_negado(segmento: str, inicio: int) -> bool:
         r"\bsin\s+$",
         r"\bningun(?:a)?\s+$",
         r"\bno\s+hay\s+un(?:a)?\s+$",
-        r"\bni\s+(?:tampoco\s+)?(?:hay\s+|se\s+siente\s+)?$",
+        r"\bni\s+(?:tampoco\s+)?(?:hay\s+|se\s+siente\s+)?(?:(?:un|una)\s+)?$",
     ]
 
     return any(
