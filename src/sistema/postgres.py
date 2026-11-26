@@ -45,8 +45,13 @@ class ErrorConexionPostgres(RuntimeError):
     """No se pudo abrir una conexión con PostgreSQL."""
 
 
-def conectar_postgres(config: ConfiguracionPostgres) -> psycopg.Connection:
+def conectar_postgres(
+    config: ConfiguracionPostgres, *, timeout_sentencia_ms: int | None = None,
+) -> psycopg.Connection:
     """Abre una conexión. El llamador la cierra al salir de su bloque with."""
+    opciones = {}
+    if timeout_sentencia_ms is not None:
+        opciones = {"options": f"-c statement_timeout={timeout_sentencia_ms}"}
     try:
         return psycopg.connect(
             host=config.host,
@@ -55,6 +60,7 @@ def conectar_postgres(config: ConfiguracionPostgres) -> psycopg.Connection:
             user=config.usuario,
             password=config.clave,
             connect_timeout=config.timeout,
+            **opciones,
         )
     except psycopg.Error:
         raise ErrorConexionPostgres("No se pudo conectar a PostgreSQL") from None
