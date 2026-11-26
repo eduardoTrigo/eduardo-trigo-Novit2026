@@ -1,6 +1,6 @@
 # Arquitectura de PIA-3
 
-## Arquitectura actual en `e39eb37`
+## Circuito persistente de seguridad
 
 El [Dockerfile](../Dockerfile) instala el proyecto con pip sobre Python 3.12 y ejecuta `python -m sistema.security_integrated`. El [entrypoint](../src/sistema/security_integrated.py) abre SQLite, carga Whisper, inicia el worker de notas, conecta MQTT y activa un hilo de heartbeat. Con `PIA3_ENABLE_OUTBOX=1`, valor del [Compose](../docker-compose.yml), inicia también el worker de publicaciones. La imagen usa `0` como valor por defecto.
 
@@ -48,11 +48,19 @@ El entrypoint de Compose suscribe lecturas de sensores y energía y entrega las 
 
 La corrida oficial obtuvo 75,0/100 y B1 5,83/10 en los dos escenarios obligatorios. Conservó B2, F1, F2 y las eliminatorias y registró dos bloqueos de SQLite en el procesamiento de sensores y el encolado B1. El ensayo con broker real y fuentes de planta controladas corroboró recuperación de episodios, evidencia y envío pendiente. La cobertura de alertas por voz bajo saturación sigue abierta. [Evaluación B1](EVALUACION_B1.md)
 
+## PostgreSQL en el Issue #15
+
+El arranque estándar de Compose incluye PostgreSQL 16 con pgvector 0.8.7, en `planta-lan` y con la etiqueta `academia.planta: pc`. El servicio usa `postgres:5432` dentro de la red de planta y tiene el volumen `pia3_postgres` en `/var/lib/postgresql/data`. Su límite de 1 CPU y 1 GiB deja el total de la solución en 3 CPU y 3 GiB, dentro del máximo de 4 CPU y 8 GB. [Compose](../docker-compose.yml)
+
+El rol de administración crea la extensión `vector` y un rol de aplicación con permiso de conexión a `pia3` y acceso a la extensión. La inicialización 001 se ejecuta en un volumen nuevo y admite reaplicación como administrador. El healthcheck comprueba autenticación por TCP y presencia de la extensión. El cliente psycopg lee la configuración cuando un consumidor abre una conexión. El agente carece de una dependencia de arranque con PostgreSQL y la base valida sus credenciales en su propio entrypoint. [Inicialización 001](../infra/postgres/001-vector.sql) · [Cliente psycopg](../src/sistema/postgres.py)
+
+SQLite sigue siendo la fuente de notas, partes, episodios, evidencia y outbox. PostgreSQL alojará el estado de conversación y el índice documental cuando se definan los esquemas, permisos y reglas de retención. [Decisión DT-03](DECISIONES_TECNICAS.md#dt-03--conservar-sqlite-e-integrar-postgresql-16-con-pgvector)
+
 ## Arquitectura propuesta para completar Entrega 1
 
 - **Parte de voz y tablet.** Agregar extracción validada a `FilaParte` a partir de la transcripción y de los datos de planta e historian. Descargar y asociar las fotos. Publicar el borrador en la tablet, procesar `planta/respuestas` y conservar la confirmación. Integrar este flujo sin demorar la alerta local.
 - **Estado de enlace y pendientes.** Derivar del estado efectivo del sistema los campos de enlace y pendientes del latido.
-- **PostgreSQL 16 y pgvector.** Incorporar PostgreSQL a Compose para persistir la conversación del parte y alojar el índice documental. Conservar temporalmente SQLite para notas y outbox de seguridad mientras se valida cualquier cambio de persistencia de ese circuito.
+- **Memoria del parte.** Persistir en PostgreSQL el estado de conversación por nota y definir su ciclo de vida. Validar la recuperación del estado de tablet y borrador.
 - **Tools y MCP.** Incorporar herramientas de solo lectura con esquemas Pydantic estrictos sobre fuentes oficiales. Exponer al menos una por MCP y reutilizar su contrato de consulta.
 - **RAG y armado de contexto.** Indexar el corpus con metadatos y vigencia. Recuperar y citar secciones aplicables. El contexto combinará documentación con datos operativos de API o SQL para límites y stock.
 
