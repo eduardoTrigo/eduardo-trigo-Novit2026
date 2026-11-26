@@ -54,6 +54,50 @@ services:
     cpus: 2.0
     mem_limit: 2g
 
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg16-bookworm@sha256:484e838076e04939d27d3e176e91c86eea96236126023be8d3059761122e579f
+    restart: unless-stopped
+    networks:
+      - planta-lan
+    labels:
+      academia.planta: "pc"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pia3}
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-pia3_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+      PIA3_POSTGRES_APP_USER: ${POSTGRES_USER:-pia3_app}
+      PIA3_POSTGRES_APP_PASSWORD: ${POSTGRES_PASSWORD:-}
+    # Validar aquí para que Compose pueda iniciar el agente por separado sin estas credenciales.
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        : "$${POSTGRES_PASSWORD:?Configura POSTGRES_ADMIN_PASSWORD}"
+        : "$${PIA3_POSTGRES_APP_PASSWORD:?Configura POSTGRES_PASSWORD}"
+        if [ "$$POSTGRES_USER" = "$$PIA3_POSTGRES_APP_USER" ] ||
+           [ "$$POSTGRES_PASSWORD" = "$$PIA3_POSTGRES_APP_PASSWORD" ]; then
+          echo 'PostgreSQL requiere usuarios y contraseñas distintos para administración y aplicación.' >&2
+          exit 1
+        fi
+        exec docker-entrypoint.sh postgres
+    volumes:
+      - pia3_postgres:/var/lib/postgresql/data
+      - ./infra/postgres/001-vector.sql:/docker-entrypoint-initdb.d/001-vector.sql:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          PGPASSWORD="$$PIA3_POSTGRES_APP_PASSWORD"
+          psql -X -w -h 127.0.0.1 -U "$$PIA3_POSTGRES_APP_USER" -d "$$POSTGRES_DB"
+          -Atqc "SELECT 1 FROM pg_extension WHERE extname = 'vector'" | grep -qx 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    cpus: 1.0
+    mem_limit: 1g
+
 networks:
   planta-lan:
     external: true
@@ -62,3 +106,4 @@ networks:
 volumes:
   pia3_datos:
   pia3_modelos:
+  pia3_postgres:

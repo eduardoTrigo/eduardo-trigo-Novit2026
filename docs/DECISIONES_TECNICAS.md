@@ -19,11 +19,11 @@ Este registro conserva el motivo y el estado de cada decisión. El seguimiento d
 
 ## DT-03 · Conservar SQLite e integrar PostgreSQL 16 con pgvector
 
-- **Estado** · Adoptada la conservación temporal de SQLite. PostgreSQL 16 con pgvector y memoria de conversación será la próxima prioridad tras cerrar B1.
-- **Contexto y justificación** · SQLite sostiene la persistencia de notas y la outbox transaccional. El Anexo exige Postgres dentro de Compose, memoria de la conversación y el índice vectorial. Se incorporarán esas capacidades sin reemplazar por anticipado la persistencia de seguridad.
-- **Riesgo** · Dos almacenes requieren definir qué datos pertenecen a cada uno, cómo se recuperan y qué presupuesto de recursos consumen. Cualquier migración del circuito actual requiere su propia validación.
-- **Evidencia** · La corrida del Issue #13 registró decisiones y envíos B1 en SQLite. Su traslado requiere preservar las claves de deduplicación y las transacciones que agrupan confirmación, trabajo, evidencia y outbox. [Evaluación B1](EVALUACION_B1.md) · [Transacción SQLite](../src/sistema/security_transaction.py) · [Anexo citado en el plan](PLAN.md#fuentes-y-línea-de-base)
-- **Referencia** · [#7](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/issues/7) y futuro Issue de parte por voz y memoria.
+- **Estado** · Infraestructura implementada en el Issue #15. El diseño de memoria e indexación queda para incrementos posteriores.
+- **Contexto y justificación** · El Anexo exige que el arranque estándar de Compose incluya PostgreSQL. La imagen oficial de pgvector se fija por etiqueta y digest para reproducir la versión. PostgreSQL valida sus credenciales dentro de su contenedor, de modo que Compose puede iniciar el agente por separado. El rol de aplicación recibe permisos de conexión y el administrador aplica el SQL versionado.
+- **Responsabilidades** · SQLite sostiene notas, partes, decisiones B1, evidencia y outbox transaccional. Preservar las claves de deduplicación y la atomicidad entre confirmación, trabajo y publicaciones es parte del contrato interno. PostgreSQL brindará almacenamiento para el estado de conversación por nota y el índice documental. [Transacción SQLite](../src/sistema/security_transaction.py) · [Evaluación B1](EVALUACION_B1.md)
+- **Riesgo** · Hay que definir permisos sobre tablas, recuperación y retención para la memoria y el índice. Los dos servicios suman límites de 3 CPU y 3 GiB. Se medirán los picos bajo carga cuando existan consultas e indexación.
+- **Evidencia y referencias** · El healthcheck conecta por TCP con el rol de aplicación y verifica la extensión. Las pruebas aisladas comprueban versión, operación vectorial, autenticación y persistencia. [Issue #15](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/issues/15) · [Anexo citado en el plan](PLAN.md#fuentes-y-línea-de-base) · [Procedimiento de verificación](../README.md#pruebas-de-integración-y-persistencia-aisladas)
 
 ## DT-04 · Usar GitHub Issues, PLAN.md, Codex y revisión humana
 
