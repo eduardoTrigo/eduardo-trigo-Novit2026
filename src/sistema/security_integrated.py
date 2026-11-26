@@ -33,8 +33,11 @@ from sistema.outbox_worker import WorkerOutbox
 from sistema.part_classification_store import AlmacenClasificacionB1
 from sistema.part_classification_worker import WorkerClasificacionB1
 from sistema.part_context import ClientePlanta
+from sistema.part_memory import RepositorioMemoriaPostgres, WorkerMemoria
+from sistema.part_memory_store import AlmacenMemoriaLocal
 from sistema.part_store import AlmacenPartes
 from sistema.part_worker import WorkerPartes
+from sistema.postgres import ConfiguracionPostgres
 from sistema.sensor_store import AlmacenSensoresB1
 from sistema.sensor_worker import WorkerSensoresB1
 from sistema.transcription_service import TranscripcionPrioritaria
@@ -89,6 +92,13 @@ def main():
     outbox_b1 = OutboxSeguridad(ruta, b1=True)
     planta = ClientePlanta(os.getenv("PLANTA_API_URL", "http://localhost:8100"))
     partes = AlmacenPartes(almacen, outbox_borradores)
+    worker_memoria = None
+    try:
+        config_memoria = ConfiguracionPostgres.desde_entorno()
+    except ValueError as error:
+        logger.warning("Sin sincronización de memoria PostgreSQL: %s", error)
+    else:
+        worker_memoria = WorkerMemoria(AlmacenMemoriaLocal(ruta), RepositorioMemoriaPostgres(config_memoria))
 
     logger.info("Base SQLite: %s", ruta)
     logger.info("Notas pendientes: %s", almacen.pendientes())
@@ -177,6 +187,8 @@ def main():
             worker_borradores.iniciar()
 
         worker_partes.iniciar()
+        if worker_memoria is not None:
+            worker_memoria.iniciar()
         worker_b1.iniciar()
         worker_sensores.iniciar()
         worker_eventos_b1.iniciar()
@@ -201,6 +213,9 @@ def main():
 
         if not worker_partes.detener():
             logger.error("Worker de partes sigue activo")
+
+        if worker_memoria is not None and not worker_memoria.detener():
+            logger.error("Worker de memoria sigue activo")
 
         if not worker_b1.detener():
             logger.error("Worker de clasificación B1 sigue activo")

@@ -59,7 +59,7 @@ python -c "from planta_contrato import EstadoSistema; print('Contrato Novit inst
 
 ## Estado del desarrollo
 
-El agente recibe recorridas por MQTT, transcribe audio en la planta, detecta condiciones de seguridad, procesa partes y clasifica partes confirmados y desvíos de sensores con reglas B1. SQLite conserva las notas, los partes, las decisiones y la outbox. PostgreSQL está disponible para la futura memoria conversacional y la recuperación documental.
+El agente recibe recorridas por MQTT, transcribe audio en la planta, detecta condiciones de seguridad, procesa partes y clasifica partes confirmados y desvíos de sensores con reglas B1. SQLite conserva las notas, los partes, las decisiones y la outbox. PostgreSQL permite recuperar la memoria conversacional por nota.
 
 ## Arquitectura
 
@@ -87,7 +87,7 @@ test -e .env || cp .env.example .env
 
 Completa `POSTGRES_ADMIN_PASSWORD` y `POSTGRES_PASSWORD` en `.env` con dos contraseñas aleatorias distintas generadas por un gestor de contraseñas. Usa comillas simples si contienen `$`. El archivo está excluido de Git. [Plantilla `.env.example`](.env.example)
 
-Con las credenciales definidas, el arranque estándar inicia el agente y PostgreSQL.
+Con las credenciales definidas, el arranque estándar inicia el agente y PostgreSQL. Si el volumen de PostgreSQL ya existía antes del Issue #17, aplica primero la migración de memoria. [Migración 002](#migración-y-consulta-de-memoria-conversacional)
 
 ```bash
 docker compose config --quiet
@@ -127,7 +127,7 @@ docker compose stop agente-planta postgres
 
 El servicio `postgres` usa la imagen oficial de pgvector `0.8.7-pg16-bookworm`, fijada por digest. Escucha en `postgres:5432` dentro de `planta-lan` y guarda los datos en `pia3_postgres`. El agente y la base tienen límites de 2 CPU/2 GiB y 1 CPU/1 GiB respectivamente. El total de ambos servicios es 3 CPU y 3 GiB. [Imagen oficial de pgvector](https://github.com/pgvector/pgvector#docker) · [Compose](docker-compose.yml)
 
-El rol administrativo (`pia3_admin` por defecto) inicializa la base. El rol de aplicación (`pia3_app`) puede conectarse y usar `vector` en la base `pia3`. Los permisos sobre futuras tablas se concederán cuando se creen. PostgreSQL rechaza contraseñas vacías, contraseñas iguales o roles con el mismo nombre antes de inicializar su volumen.
+El rol administrativo (`pia3_admin` por defecto) inicializa la base. El rol de aplicación (`pia3_app`) puede conectarse, usar `vector` y leer, insertar y actualizar las revisiones de memoria. PostgreSQL rechaza contraseñas vacías, contraseñas iguales o roles con el mismo nombre antes de inicializar su volumen.
 
 En el primer despliegue, `docker compose pull postgres` descarga la referencia fijada. Para iniciar y verificar solo PostgreSQL con la red de planta disponible, usa estos comandos.
 
@@ -146,6 +146,25 @@ docker compose exec -T postgres sh -ec \
 ```
 
 Para abrir una conexión desde Python, `ConfiguracionPostgres.desde_entorno()` lee las variables de aplicación exportadas al proceso. `conectar_postgres(config)` abre una sesión con un timeout de conexión de 5 segundos por defecto y expone `ErrorConexionPostgres` si falla. El llamador gestiona la sesión con `with`.
+
+### Migración y consulta de memoria conversacional
+
+En un volumen nuevo, la imagen aplica `001` y `002` en orden. Sobre un volumen que ya tiene `001`, inicia PostgreSQL y envía el archivo idempotente con `psql` como administrador. El comando usa su volumen existente y también funciona si el contenedor todavía carece del montaje de `002`. [Migración 002](infra/postgres/002-memoria.sql)
+
+```bash
+docker compose up -d --no-deps --wait postgres
+docker compose exec -T postgres sh -ec \
+  'psql -X -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f -' < infra/postgres/002-memoria.sql
+docker compose up -d --build
+```
+
+Para consultar una nota, reemplaza `NOTA-00001` por su identificador. La salida contiene datos de planta y se destina a un operador autorizado.
+
+```bash
+docker compose exec -T agente-planta python -m sistema.part_memory NOTA-00001
+```
+
+`sincronizacion` indica `sincronizada` cuando coinciden las revisiones, `pendiente` cuando PostgreSQL tiene una copia anterior o ninguna y `sin_referencia_local` si solo existe la versión remota. `desalineada` identifica una revisión remota superior a la local y `no_encontrada` indica ausencia en ambas. El agente sigue procesando en SQLite si PostgreSQL falla y retoma los pendientes con espera creciente. El timeout SQL del repositorio es de 3 segundos. La política propone 90 días desde el cierre conocido de una conversación y deja la limpieza automática para una etapa posterior. [Mini spec y política de memoria](docs/SPEC_MEMORIA_CONVERSACIONAL.md)
 
 ### Pruebas de integración y persistencia aisladas
 
@@ -176,7 +195,7 @@ YAML
   trap '"${pg[@]}" stop postgres' EXIT
   endpoint="$("${pg[@]}" port postgres 5432)"
   export POSTGRES_PORT="${endpoint##*:}"
-  python -m pytest -q tests/test_postgres_integration.py
+  python -m pytest -q tests/test_postgres_integration.py tests/test_part_memory_integration.py
 
   db=("${pg[@]}" exec -T postgres psql -X -qAt -v ON_ERROR_STOP=1 -U pia3_admin -d pia3)
   "${db[@]}" -c 'CREATE TABLE issue15_probe (id int PRIMARY KEY, muestra vector(3))' \

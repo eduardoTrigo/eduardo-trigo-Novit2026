@@ -54,13 +54,16 @@ El arranque estándar de Compose incluye PostgreSQL 16 con pgvector 0.8.7, en `p
 
 El rol de administración crea la extensión `vector` y un rol de aplicación con permiso de conexión a `pia3` y acceso a la extensión. La inicialización 001 se ejecuta en un volumen nuevo y admite reaplicación como administrador. El healthcheck comprueba autenticación por TCP y presencia de la extensión. El cliente psycopg lee la configuración cuando un consumidor abre una conexión. El agente carece de una dependencia de arranque con PostgreSQL y la base valida sus credenciales en su propio entrypoint. [Inicialización 001](../infra/postgres/001-vector.sql) · [Cliente psycopg](../src/sistema/postgres.py)
 
-SQLite sigue siendo la fuente de notas, partes, episodios, evidencia y outbox. PostgreSQL alojará el estado de conversación y el índice documental cuando se definan los esquemas, permisos y reglas de retención. [Decisión DT-03](DECISIONES_TECNICAS.md#dt-03--conservar-sqlite-e-integrar-postgresql-16-con-pgvector)
+SQLite sigue siendo la fuente de notas, partes, episodios, evidencia y outbox. PostgreSQL aloja la vista conversacional por nota en `memoria.partes`. El índice documental queda pendiente. [Decisión DT-03](DECISIONES_TECNICAS.md#dt-03--conservar-sqlite-e-integrar-postgresql-16-con-pgvector)
+
+## Memoria conversacional en el Issue #17
+
+SQLite registra una revisión pendiente en la misma transacción que cambia la nota, el parte o una respuesta. Un hilo independiente extrae una captura consistente, cierra la lectura SQLite y escribe en PostgreSQL. El reconocimiento local sigue al commit remoto y las revisiones menores o repetidas se descartan en PostgreSQL. La consulta por ID devuelve el documento remoto y el estado de sincronización respecto de SQLite. [Mini spec y política de memoria](SPEC_MEMORIA_CONVERSACIONAL.md)
 
 ## Arquitectura propuesta para completar Entrega 1
 
 - **Parte de voz y tablet.** Agregar extracción validada a `FilaParte` a partir de la transcripción y de los datos de planta e historian. Descargar y asociar las fotos. Publicar el borrador en la tablet, procesar `planta/respuestas` y conservar la confirmación. Integrar este flujo sin demorar la alerta local.
 - **Estado de enlace y pendientes.** Derivar del estado efectivo del sistema los campos de enlace y pendientes del latido.
-- **Memoria del parte.** Persistir en PostgreSQL el estado de conversación por nota y definir su ciclo de vida. Validar la recuperación del estado de tablet y borrador.
 - **Tools y MCP.** Incorporar herramientas de solo lectura con esquemas Pydantic estrictos sobre fuentes oficiales. Exponer al menos una por MCP y reutilizar su contrato de consulta.
 - **RAG y armado de contexto.** Indexar el corpus con metadatos y vigencia. Recuperar y citar secciones aplicables. El contexto combinará documentación con datos operativos de API o SQL para límites y stock.
 

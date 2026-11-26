@@ -124,3 +124,7 @@ Los archivos nuevos de esta lista son propuestos. Las rutas enlazadas existen.
 - Ampliar los escenarios oficiales para conversaciones de varias lecturas. Revisar la aclaración adicional de `NOTA-00006` en `martes-tranquilo` y medir el commit final para completar el presupuesto inicial de 10 s.
 - Confirmar autorización de `faster-whisper base` y arranque sin Internet. Medir si la carga SQLite, el uso de CPU y el comportamiento actual de la outbox mantienen el margen observado en B2 y F2 antes de proponer cambios de prioridad.
 - Obtener revisión humana antes de implementar o migrar tablas. La incorporación de un modelo nuevo, dependencias o infraestructura y una próxima corrida oficial requieren autorización específica.
+
+## Memoria conversacional en el Issue #17
+
+Las transiciones del parte siguen en SQLite. Cada cambio confirmado de nota, parte o respuesta registra una revisión para publicar su captura histórica en PostgreSQL. El estado de los turnos y los borradores sigue disponible durante una caída de PostgreSQL. Los intentos técnicos de audio se proyectan por separado del contador de interacciones. [Mini spec y política de memoria](SPEC_MEMORIA_CONVERSACIONAL.md)

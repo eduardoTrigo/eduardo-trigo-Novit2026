@@ -32,6 +32,14 @@ services:
       # Base persistente SQLite
       PIA3_DB_PATH: /app/data_runtime/seguridad.sqlite3
 
+      # Memoria conversacional (rol de aplicación)
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-pia3}
+      POSTGRES_USER: ${POSTGRES_USER:-pia3_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_CONNECT_TIMEOUT: ${POSTGRES_CONNECT_TIMEOUT:-5}
+
       # Publicacion de alertas desactivada
       # durante las pruebas iniciales
       PIA3_ENABLE_OUTBOX: "1"
@@ -84,6 +92,7 @@ services:
     volumes:
       - pia3_postgres:/var/lib/postgresql/data
       - ./infra/postgres/001-vector.sql:/docker-entrypoint-initdb.d/001-vector.sql:ro
+      - ./infra/postgres/002-memoria.sql:/docker-entrypoint-initdb.d/002-memoria.sql:ro
     healthcheck:
       test:
         - CMD-SHELL

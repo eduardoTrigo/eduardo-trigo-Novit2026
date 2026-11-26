@@ -12,6 +12,7 @@ from pydantic import TypeAdapter
 from sistema.note_store import AlmacenNotas
 from sistema.part_classification_store import crear_tablas_b1, registrar_confirmacion_b1
 from sistema.part_extraction import normalizar_texto
+from sistema.part_memory_store import crear_cola_memoria
 from sistema.security_outbox import OutboxSeguridad
 
 
@@ -123,6 +124,7 @@ class AlmacenPartes:
                 db.execute("ALTER TABLE partes ADD COLUMN interacciones INTEGER NOT NULL DEFAULT 0")
                 self._migrar_interacciones(db)
             crear_tablas_b1(db)
+            crear_cola_memoria(db)
 
     def _migrar_interacciones(self, db: sqlite3.Connection) -> None:
         db.execute("""
