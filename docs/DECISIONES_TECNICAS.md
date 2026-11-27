@@ -63,3 +63,9 @@ Este registro conserva el motivo y el estado de cada decisión. El seguimiento d
 - **Estado** · Recuperación textual, evaluación oficial y `buscar_manuales` implementados en el Issue #25.
 - **Contexto y justificación** · El corpus versionado ya publica lexemas en español, vigencia y alcance. Sobre ese índice se usan cobertura de lexemas, títulos, códigos exactos y filtros aplicados antes del ranking final. La consulta documental opera con la identidad explícita del corpus y el rol de aplicación.
 - **Evidencia y pendientes** · Se evaluaron BM25, FTS base y FTS operativo sobre las 71 preguntas de Novit. El ejemplo académico de embeddings requiere confirmación de autorización para el TP antes de habilitar recuperación semántica. [Contratos](SPEC_RAG_RETRIEVAL.md) · [Resultados](EVALUACION_RAG.md)
+
+## DT-10 · Ensamblar contexto determinista a partir de lecturas tipadas
+
+- **Estado** · Diseño y componente funcional verificados en el Issue #27.
+- **Contexto y justificación** · El ensamblado conserva la autoridad de cada fuente y la referencia SQLite para la memoria. Un orden explícito separa las reglas de los datos externos y sitúa la entrada original al final.
+- **Evidencia y pendientes** · Se verificó la composición con datos reales del catálogo, citas y memoria sincronizada. Los límites por componente y el presupuesto global se aplican antes de entregar el JSON. La integración con un modelo, LangChain y el control global por nota siguen pendientes. [Mini spec](SPEC_CONTEXT_BUILDER.md) · [Issue #27](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/issues/27)
