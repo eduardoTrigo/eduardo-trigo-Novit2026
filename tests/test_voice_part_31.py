@@ -2,6 +2,7 @@ import time
 from datetime import timedelta
 
 import pytest
+from planta_contrato import MensajeTablet
 
 from sistema.execution_budget import ConsumoEjecucion, ControlEjecucion, PresupuestoEjecucion
 from sistema.part_agent import AgentePartes
@@ -11,6 +12,8 @@ from sistema.part_context import verificar_lectura
 from sistema.plant_tool_models import HistorialSensores, Muestra
 from test_part_clarification import catalogo
 from test_part_extraction import definicion_planta
+from test_part_messages import preparar, transcribir_nota
+from test_part_workflow import procesar, respuesta
 from test_security_messages import crear_nota
 
 
@@ -57,6 +60,119 @@ def test_clausula_fotografica_conserva_limites_de_la_lectura(texto, estado, lect
     assert [(f.tag, f.variable, f.valor) for f in plan.filas] == lecturas
     if estado == "aclaracion_pendiente":
         assert plan.contexto["pendientes"][0]["tipo"] == "equipo"
+
+
+@pytest.mark.parametrize(("texto", "filas"), [
+    ("La uno 112 kilos de descarga. La dos hace ruido en el motor.", [
+        ("B-101", "presion_descarga_local", 112, "kg/cm2", None),
+        ("B-102", "ruido", None, None, "hace ruido en el motor"),
+    ]),
+    ("La dos hace ruido en el rodamiento.", [
+        ("B-102", "ruido", None, None, "hace ruido en el rodamiento"),
+    ]),
+    ("La dos vibra en  el  motor.", [
+        ("B-102", "vibracion", None, None, "vibra en  el  motor"),
+    ]),
+    ("La tres suena raro en el rodamiento.", [
+        ("B-103", "ruido", None, None, "suena raro en el rodamiento"),
+    ]),
+    ("La dos hace ruido en el motor y el rodamiento.", [
+        ("B-102", "ruido", None, None, "hace ruido en el motor y el rodamiento"),
+    ]),
+    ("La dos no hace ruido en el motor.", [
+        ("B-102", "ruido", None, None, "no hace ruido en el motor"),
+    ]),
+    ("La dos hace ruido en el motor y vibra en el rodamiento.", [
+        ("B-102", "ruido", None, None, "hace ruido en el motor"),
+        ("B-102", "vibracion", None, None, "vibra en el rodamiento"),
+    ]),
+    ("La uno 112 kilos de descarga el rodamiento midió 59 grados.", [
+        ("B-101", "presion_descarga_local", 112, "kg/cm2", None),
+        ("B-101", "temperatura_rodamiento_ir", 59, "degC", None),
+    ]),
+    ("La uno 112 kilos de descarga y el motor 65 grados.", [
+        ("B-101", "presion_descarga_local", 112, "kg/cm2", None),
+        ("B-101", "temperatura_motor_ir", 65, "degC", None),
+    ]),
+    ("La uno 112 kilos de descarga el rodamiento medio 59 grados con la pistola.", [
+        ("B-101", "presion_descarga_local", 112, "kg/cm2", None),
+        ("B-101", "temperatura_rodamiento_ir", 59, "degC", None),
+    ]),
+    ("La dos hace ruido en el motor y el rodamiento midió cincuenta y nueve grados.", [
+        ("B-102", "ruido", None, None, "hace ruido en el motor"),
+        ("B-102", "temperatura_rodamiento_ir", 59, "degC", None),
+    ]),
+    ("La dos hace ruido en el motor, el rodamiento midió 59 grados.", [
+        ("B-102", "ruido", None, None, "hace ruido en el motor"),
+        ("B-102", "temperatura_rodamiento_ir", 59, "degC", None),
+    ]),
+    ("Saqué foto de la dos, hace ruido en el motor. La tres 110 bar de descarga.", [
+        ("B-102", "ruido", None, None, "hace ruido en el motor"),
+        ("B-103", "presion_descarga_local", 110, "bar", None),
+    ]),
+    ("Saqué foto de la dos y el rodamiento midió 59 grados.", [
+        ("B-102", "temperatura_rodamiento_ir", 59, "degC", None),
+    ]),
+    ("La dos hace ruido sobre el motor La tres 110 bar de descarga.", [
+        ("B-102", "ruido", None, None, "hace ruido sobre el motor"),
+        ("B-103", "presion_descarga_local", 110, "bar", None),
+    ]),
+])
+def test_segmentacion_preserva_observaciones_y_lecturas_de_componentes(texto, filas):
+    plan = derivar(texto)
+    assert plan.estado == "borrador_pendiente"
+    assert [(f.tag, f.variable, f.valor, f.unidad, f.observacion) for f in plan.filas] == filas
+    assert not plan.contexto["no_interpretada"]
+    assert plan.contexto["pendientes"] == plan.contexto["segmentos_no_interpretados"] == []
+    assert plan.mensaje.espera_respuesta and plan.mensaje.pantalla.filas == plan.filas
+
+
+@pytest.mark.parametrize(("texto", "segmento"), [
+    ("La uno 112 kilos de descarga el rodamiento midió.", "el rodamiento midio"),
+    ("La uno 112 kilos de descarga el rodamiento.", "el rodamiento"),
+    ("La uno 112 kilos de descarga, el motor no midió 65 grados.", "el motor no midio 65 grados"),
+    ("La uno 112 kilos de descarga y el motor midió aproximadamente 65 grados.",
+     "el motor midio aproximadamente 65 grados"),
+    ("La uno 112 kilos de descarga. La dos el rodamiento o el motor midió 65 grados.",
+     "el rodamiento o el motor midio 65 grados"),
+])
+def test_lectura_incompleta_o_incierta_de_componente_conserva_revision(texto, segmento):
+    plan = derivar(texto)
+    assert plan.estado == "revision_manual" and plan.mensaje is None
+    assert [(f.tag, f.variable, f.valor) for f in plan.filas] == [("B-101", "presion_descarga_local", 112)]
+    assert plan.contexto["no_interpretada"] and plan.contexto["pendientes"] == []
+    assert plan.contexto["segmentos_no_interpretados"] == [{"texto": segmento, "motivo": "lectura_no_resuelta"}]
+
+
+def test_observacion_de_componente_con_equipo_ambiguo_pide_aclaracion_completa():
+    plan = derivar("La uno o la dos hace ruido en el motor.")
+    assert plan.estado == "aclaracion_pendiente" and not plan.filas
+    duda, = plan.contexto["pendientes"]
+    assert duda == {"tipo": "equipo", "clausula": "hace ruido en el motor", "opciones": ["B-101", "B-102"]}
+    assert not plan.contexto["no_interpretada"] and plan.contexto["segmentos_no_interpretados"] == []
+    assert plan.mensaje.espera_respuesta and len(plan.mensaje.pantalla.opciones) == 2
+    estado, filas, siguiente = resolver(duda, "B-102", definicion_planta(), plan.filas)
+    assert estado == "resuelta" and siguiente is None
+    assert [(f.tag, f.variable, f.observacion) for f in filas] == [
+        ("B-102", "ruido", "hace ruido en el motor"),
+    ]
+
+
+def test_borrador_mixto_con_componente_se_confirma_y_recupera(tmp_path):
+    notas, _, outbox, partes, worker = preparar(tmp_path)
+    nota = crear_nota()
+    transcribir_nota(notas, nota, "La uno 112 kilos de descarga. La dos hace ruido en el motor.")
+    assert worker.procesar_siguiente()
+    borrador = MensajeTablet.model_validate_json(outbox.reclamar()["payload"])
+    assert borrador.ts == nota.ts and borrador.espera_respuesta
+    assert [(f.tag, f.variable, f.valor, f.unidad, f.observacion) for f in borrador.pantalla.filas] == [
+        ("B-101", "presion_descarga_local", 112, "kg/cm2", None),
+        ("B-102", "ruido", None, None, "hace ruido en el motor"),
+    ]
+    _, _, _, partes, worker = preparar(tmp_path)
+    procesar(partes, worker, respuesta(partes.obtener(nota.id), "Confirmo"))
+    confirmado = preparar(tmp_path)[3].obtener(nota.id)
+    assert confirmado.estado == "confirmado" and confirmado.filas == borrador.pantalla.filas
 
 
 def test_lectura_mixta_con_stt_imperfecto_conserva_filas_y_pregunta_equipo_y_unidad():

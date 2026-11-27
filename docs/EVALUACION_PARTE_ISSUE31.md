@@ -88,3 +88,19 @@ El análisis excluye los complementos espaciales antes de identificar equipo y v
 La evaluación dirigida de las 13 notas dio salida idéntica antes y después con el STT archivado y con texto de referencia. Con STT se mantuvieron 11/13 borradores, 23/24 en TAG y variable, 20/22 en valor, 21/22 en unidad y 9 confirmaciones virtuales. Las asociaciones históricas ya persistidas quedan fuera del reprocesamiento.
 
 La suite con `PIA3_RAG_CORPUS` obtuvo 653 aprobadas y 22 omitidas. Las nueve integraciones aisladas de PostgreSQL incluyeron la proyección de la referencia espacial a nivel de nota tras la aclaración y confirmación. También pasaron `docker compose config --quiet` y `git diff --check`.
+
+### Componentes en observaciones cualitativas
+
+Sobre `8b06159`, la matriz inicial reprodujo once fallos. La regla separaba por espacios ante «el motor» y «el rodamiento», incluso dentro de «hace ruido en el motor». El fragmento aislado se interpretaba como una medición incompleta y el turno terminaba en revisión manual. El ajuste conserva el complemento dentro de la observación y separa el componente que inicia otra lectura. También reconoce ese comienzo después de una referencia fotográfica seguida de «y». [Observación del PR #32](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/pull/32#discussion_r4720299938)
+
+| Caso de la matriz | Resultado verificado |
+| --- | --- |
+| Ruido y vibración en motor o rodamiento, con puntuación variable y componentes coordinados | El borrador conserva la observación completa, con valor y unidad nulos. |
+| Descarga seguida de una medición de motor o rodamiento, con o sin coma y con números escritos o hablados | El borrador conserva las dos mediciones en filas independientes. |
+| Lectura incompleta, negada, aproximada o con componente ambiguo | Se conserva la fila válida. El segmento sin resolver se incluye en el contexto y el turno queda en revisión manual. |
+| Equipo ambiguo y cambio explícito de equipo | La ambigüedad genera una aclaración con la observación completa. La mención explícita conserva las filas de cada equipo. |
+| Foto junto a una observación o una medición | La referencia fotográfica no elimina la lectura. Las regresiones previas de asociación posterior a la aclaración y exclusión de referencias espaciales pasan. |
+
+La prueba integrada confirmó el borrador mixto de B-101 y B-102 en SQLite y recuperó ambas filas tras reabrir la base. La evaluación dirigida produjo la misma salida para las 13 notas antes y después, con STT archivado y texto de referencia. Con STT se mantuvieron 11/13 borradores, 23/24 en TAG y variable, 20/22 en valor, 21/22 en unidad y 9 confirmaciones virtuales. La nota 00011 conservó sus filas y el turno de aclaración.
+
+Se agregaron 22 casos, incluida la prueba integrada del borrador mixto. Pasaron 201 pruebas focalizadas y la suite completa con `PIA3_RAG_CORPUS` obtuvo 675 aprobadas y 22 omitidas. También pasaron `docker compose config --quiet` y `git diff --check`. La validación de esta corrección usó transcripciones archivadas, casos controlados y bases SQLite temporales.

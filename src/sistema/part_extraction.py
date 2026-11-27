@@ -45,14 +45,21 @@ _PREDICADO = (
     r"(?:(?:que\s+)?(?:no\s+)?(?:tiene|esta|estaba|arranca|parad[ao]|disparad[ao]|"
     r"dio|medio|marco|gotea|pierde|vibra|suena|hace)\b|[+-]?\d)"
 )
-_LECTURA_TRAS_FOTO = re.compile(rf"\s*(?:{_PREDICADO}|(?:menos\s+)?{_NUMERAL})")
-_CORTE_FOTO = re.compile(r"(?<!\d),|,(?!\d)|\by\s+(?=" + _PREDICADO + ")")
+_COMPONENTE = r"el\s+(?:rodamiento|motor)\b"
+_LECTURA_COMPONENTE = re.compile(
+    rf"{_COMPONENTE}\s+(?:{_PREDICADO}|(?:no\s+)?(?:midio|mide|me\s+dio|se\s+midio|marca)\b"
+    rf"|(?:(?:menos|aproximadamente|entre)\s+)?{_NUMERAL})"
+)
+_LECTURA_TRAS_FOTO = re.compile(rf"\s*(?:{_PREDICADO}|{_LECTURA_COMPONENTE.pattern}|(?:menos\s+)?{_NUMERAL})")
+_CORTE_FOTO = re.compile(rf"(?<!\d),|,(?!\d)|\by\s+(?={_PREDICADO}|{_LECTURA_COMPONENTE.pattern})")
 _UBICACION_FOTO = re.compile(r"\b(?:cerca|junto|delante|detras|enfrente|al lado|donde)\b")
 _CLAUSULAS = re.compile(
     r"(?<!\bmenos)(?:(?<!\d),|,(?!\d))|\by\s+(?=(?:(?:el|la|las)\s+)?"
-    r"(?:rodamiento|motor|temperatura|presion|descarga|diferencial|nivel|correas|"
-    r"gotea|pierde|sigue goteando|visor|hace|tiene|ruido|vibra|vibracion)\b)|(?<=\S)\s+(?=el (?:rodamiento|motor)\b)"
+    r"(?:temperatura|presion|descarga|diferencial|nivel|correas|"
+    r"gotea|pierde|sigue goteando|visor|hace|tiene|ruido|vibra|vibracion)\b)"
 )
+_CORTE_COMPONENTE = re.compile(rf"\s+(?:y\s+)?(?={_COMPONENTE})")
+_ENLACE_COMPONENTE = re.compile(r"\b(?:a|bajo|con|de|desde|en|entre|hacia|hasta|o|para|por|sin|sobre|tras|u)$")
 _INCERTIDUMBRE = re.compile(
     r"\b(?:no|mas o menos|aproximadamente|alrededor de|quizas|creo|entre)\b"
 )
@@ -322,6 +329,24 @@ def _frases_del_parte(texto, referencias):
         yield lectura
 
 
+def _clausulas_del_equipo(fragmento):
+    for clausula in _CLAUSULAS.split(fragmento):
+        inicio = 0
+        for corte in _CORTE_COMPONENTE.finditer(clausula):
+            anterior = clausula[inicio:corte.start()].strip()
+            if not anterior or _ENLACE_COMPONENTE.search(anterior):
+                continue
+            # Tras una lectura numérica, un segundo componente puede quedar
+            # pendiente aunque la transcripción haya omitido su medición.
+            if not _LECTURA_COMPONENTE.match(clausula, corte.end()) and (
+                not _NUMEROS.search(anterior) or any(re.search(p, anterior) for _, p in _CUALITATIVAS)
+            ):
+                continue
+            yield anterior
+            inicio = corte.end()
+        yield clausula[inicio:].strip()
+
+
 def extraer_parte(texto: str, catalogo: dict) -> ResultadoExtraccion:
     """Devuelve filas inequívocas y señala lecturas que requieren revisión."""
     alias = indexar_aliases(catalogo)
@@ -361,7 +386,7 @@ def extraer_parte(texto: str, catalogo: dict) -> ResultadoExtraccion:
                 ):
                     bomba_sin_identificar = True
                 continue
-            for clausula in _CLAUSULAS.split(fragmento):
+            for clausula in _clausulas_del_equipo(fragmento):
                 opciones = candidatos
                 equipo_clausula = equipo
                 if indice == 0 and re.search(r"\bdiferencial\b", clausula):
@@ -369,12 +394,12 @@ def extraer_parte(texto: str, catalogo: dict) -> ResultadoExtraccion:
                 if (indice == 0 and len(bombas_mencionadas) == 1 and not bomba_sin_identificar
                         and re.match(r"\s*(?:el )?rodamiento\b", clausula)):
                     equipo_clausula = next(iter(bombas_mencionadas.values()))
-                fila, duda = _fila(clausula.strip(), equipo_clausula, sensores, opciones)
+                fila, duda = _fila(clausula, equipo_clausula, sensores, opciones)
                 if isinstance(duda, dict):
                     if duda not in dudas:
                         dudas.append(duda)
                 elif duda:
-                    segmentos.append({"texto": clausula.strip(), "motivo": "lectura_no_resuelta"})
+                    segmentos.append({"texto": clausula, "motivo": "lectura_no_resuelta"})
                 if fila is None:
                     continue
                 clave = (fila.tag, fila.variable)
