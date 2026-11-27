@@ -51,3 +51,9 @@ Este registro conserva el motivo y el estado de cada decisión. El seguimiento d
 - **Estado** · Adoptada para el Issue #21.
 - **Contexto y justificación** · `mcp==1.30.0`, de la línea estable mantenida, ofrece stdio y un servidor de bajo nivel compatible con Python 3.12, Pydantic y HTTPX existentes. El transporte permite usar el ciclo de vida de subproceso del cliente y reutilizar exactamente los esquemas del catálogo.
 - **Garantías y límites** · Se exponen dos consultas mediante una lista explícita y un límite de dos trabajos activos. El catálogo conserva la validación y sus presupuestos HTTP. El proceso tiene su propio ciclo de vida y puede ejecutarse en un contenedor por sesión con la imagen del agente. [Mini spec MCP](SPEC_MCP.md) · [Release del SDK](https://github.com/modelcontextprotocol/python-sdk/releases/tag/v1.30.0)
+
+## DT-08 · Importar versiones documentales completas y conservar su procedencia
+
+- **Estado** · Ingesta documental y almacenamiento vectorial de prueba implementados en el Issue #23.
+- **Contexto y justificación** · El índice oficial ya delimita secciones, páginas y citas. La ingesta conserva esas unidades y separa órdenes históricas. Un paquete local verificable se exporta desde Git y llega al contenedor por entrada estándar, preservando el corpus en su repositorio de origen.
+- **Garantías y límites** · Una versión se publica por transacción. La identidad incluye las huellas de origen y la versión de preparación. Los vectores se separan por modelo, revisión, dimensiones, configuración y ámbito. Se adopta GIN para texto en español y distancia vectorial exacta para las pruebas. La incorporación de HNSW se evaluará con un modelo autorizado y una medición. [Mini spec RAG](SPEC_RAG_INDEXACION.md) · [Issue #23](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/issues/23)
