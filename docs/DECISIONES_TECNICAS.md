@@ -69,3 +69,9 @@ Este registro conserva el motivo y el estado de cada decisión. El seguimiento d
 - **Estado** · Diseño y componente funcional verificados en el Issue #27.
 - **Contexto y justificación** · El ensamblado conserva la autoridad de cada fuente y la referencia SQLite para la memoria. Un orden explícito separa las reglas de los datos externos y sitúa la entrada original al final.
 - **Evidencia y pendientes** · Se verificó la composición con datos reales del catálogo, citas y memoria sincronizada. Los límites por componente y el presupuesto global se aplican antes de entregar el JSON. La integración con un modelo, LangChain y el control global por nota siguen pendientes. [Mini spec](SPEC_CONTEXT_BUILDER.md) · [Issue #27](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/issues/27)
+
+## DT-11 · Ejecutar el parte con LangChain y reserva durable por nota
+
+- **Estado** · Cadena determinista del parte adoptada en el Issue #29.
+- **Contexto y justificación** · LangChain organiza la extracción, el contexto y las validaciones. SQLite conserva el control de confirmación, el outbox y el consumo entre turnos. La espera del operador suspende el presupuesto activo.
+- **Evidencia y pendientes** · Se comprobó el borrador y su confirmación en SQLite con Docker sin red. El deadline cubre el flujo transcrito con límites de cancelación para operaciones nativas. Siguen pendientes el LLM autorizado y la medición de latencia desde el origen de la nota. [Mini spec](SPEC_AGENT_RUNTIME.md) · [Issue #29](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/issues/29)

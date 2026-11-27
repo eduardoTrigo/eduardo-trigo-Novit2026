@@ -80,11 +80,15 @@ Un operador exporta un paquete desde el SHA oficial y activa la ingesta con `pyt
 
 El ensamblador recibe datos tipados ya obtenidos, selecciona fuentes y turnos por tarea, alcance y revisión, y coloca la nota original al final. Un resultado distingue instrucciones confiables, datos externos y decisiones de compactación. El módulo es independiente de los workers y admite un contador de tokens del futuro consumidor. [Contratos, autoridad y prueba Docker](SPEC_CONTEXT_BUILDER.md)
 
+## Runtime del parte en el Issue #29
+
+`WorkerPartes` ejecuta una `RunnableSequence` por turno con extracción o interpretación, Context Builder y validación estructurada. La cadena produce un plan y el worker entrega la persistencia al almacén existente. SQLite registra la reserva del turno, el consumo y el estado, junto con mensaje y outbox cuando corresponde. El circuito de seguridad conserva sus propios workers y el catálogo del parte tiene una caché independiente. [Mini spec y evidencia](SPEC_AGENT_RUNTIME.md)
+
 ## Arquitectura propuesta para completar Entrega 1
 
 - **Parte de voz y tablet.** Agregar extracción validada a `FilaParte` a partir de la transcripción y de los datos de planta e historian. Descargar y asociar las fotos. Publicar el borrador en la tablet, procesar `planta/respuestas` y conservar la confirmación. Integrar este flujo sin demorar la alerta local.
 - **Estado de enlace y pendientes.** Derivar del estado efectivo del sistema los campos de enlace y pendientes del latido.
-- **RAG e integración del contexto.** Agregar embeddings autorizados al corpus, evaluar coseno y fusión híbrida y conectar el contexto estructurado al futuro consumidor.
+- **RAG semántico.** Agregar embeddings autorizados al corpus y evaluar coseno y fusión híbrida. El contexto del parte ya usa las lecturas de su propio flujo.
 
 El análisis completo de las causas de un escalado y la generación de órdenes de trabajo corresponden a entregas posteriores.
 

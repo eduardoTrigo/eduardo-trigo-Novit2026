@@ -1,6 +1,6 @@
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier, Event
+from threading import Event
 
 import pytest
 from planta_contrato import MensajeTablet, RespuestaOperador
@@ -148,12 +148,15 @@ def test_recupera_respuesta_y_corrige_atomicamente_despues_de_rollback(tmp_path)
     with pytest.raises(sqlite3.IntegrityError):
         worker.procesar_siguiente()
     assert reabierto.obtener(nota.id) == inicial
+    revertida = reabierto.estado_ejecucion(nota.id)
+    assert revertida.motivo == "persistencia_revertida"
     assert resultado(reabierto, r.id) is None
     assert borradores.pendientes() == 1
     with sqlite3.connect(reabierto.ruta) as db:
         assert db.execute("SELECT COUNT(*) FROM borradores_parte").fetchone() == (1,)
         db.execute("DROP TRIGGER fallar_correccion")
     assert worker.procesar_siguiente()
+    assert reabierto.estado_ejecucion(nota.id).consumo.pasos > revertida.consumo.pasos
     assert resultado(reabierto, r.id) == "corregida"
     assert reabierto.obtener(nota.id).version == 2 and borradores.pendientes() == 2
 
@@ -237,16 +240,22 @@ def test_dos_lectores_de_la_misma_respuesta_aplican_una_sola_version(tmp_path):
     nota, _, borradores, partes, worker = preparar_borrador(tmp_path)
     r = respuesta(partes.obtener(nota.id), "No, la uno estaba en ciento quince kilos.")
     assert partes.guardar_respuesta(r)
-    barrera = Barrier(2)
+    en_catalogo, liberar = Event(), Event()
 
     def catalogo():
-        barrera.wait(timeout=5)
+        en_catalogo.set()
+        assert liberar.wait(timeout=5)
         return definicion_planta()
 
     worker.catalogo = catalogo
     with ThreadPoolExecutor(max_workers=2) as pool:
-        tareas = [pool.submit(worker.procesar_siguiente) for _ in range(2)]
-        assert sorted(t.result(timeout=10) for t in tareas) == [False, True]
+        primero = pool.submit(worker.procesar_siguiente)
+        try:
+            assert en_catalogo.wait(timeout=3)
+            assert pool.submit(worker.procesar_siguiente).result(timeout=3) is False
+        finally:
+            liberar.set()
+        assert primero.result(timeout=3) is True
     assert partes.obtener(nota.id).version == 2
     assert resultado(partes, r.id) == "corregida" and borradores.pendientes() == 2
 

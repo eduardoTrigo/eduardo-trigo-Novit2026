@@ -3,12 +3,14 @@
 import json
 import sqlite3
 import time
-from contextlib import closing
+from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
+from uuid import uuid4
 
 from planta_contrato import FilaParte, MensajeTablet, NotaRecorrida, RespuestaOperador, Topicos
 from pydantic import TypeAdapter
 
+from sistema.execution_budget import ConsumoEjecucion, CorteEjecucion
 from sistema.note_store import AlmacenNotas
 from sistema.part_classification_store import crear_tablas_b1, registrar_confirmacion_b1
 from sistema.part_extraction import normalizar_texto
@@ -34,6 +36,14 @@ class ParteGuardado:
 class TareaSTT:
     respuesta: RespuestaOperador
     intento: int
+
+
+@dataclass(frozen=True)
+class EstadoEjecucion:
+    id: str
+    consumo: ConsumoEjecucion
+    estado: str
+    motivo: str | None
 
 
 class AlmacenPartes:
@@ -123,6 +133,16 @@ class AlmacenPartes:
             if "interacciones" not in columnas:
                 db.execute("ALTER TABLE partes ADD COLUMN interacciones INTEGER NOT NULL DEFAULT 0")
                 self._migrar_interacciones(db)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS ejecucion_partes (
+                    nota_id TEXT PRIMARY KEY REFERENCES notas(id),
+                    ejecucion_id TEXT NOT NULL,
+                    vence REAL NOT NULL,
+                    consumo TEXT NOT NULL,
+                    estado TEXT NOT NULL,
+                    motivo TEXT
+                )
+            """)
             crear_tablas_b1(db)
             crear_cola_memoria(db)
 
@@ -142,8 +162,8 @@ class AlmacenPartes:
             WHERE estado IN ('aclaracion_pendiente', 'borrador_pendiente') AND interacciones >= ?
         """, (self.MAX_INTERACCIONES,))
 
-    def siguiente(self) -> tuple[NotaRecorrida, str | None] | None:
-        with closing(sqlite3.connect(self.ruta)) as db:
+    def siguiente(self, *, timeout: float = 5.0) -> tuple[NotaRecorrida, str | None] | None:
+        with closing(sqlite3.connect(self.ruta, timeout=timeout)) as db:
             fila = db.execute("""
                 SELECT notas.payload, notas.transcripcion
                 FROM notas
@@ -163,6 +183,80 @@ class AlmacenPartes:
             return None
         return NotaRecorrida.model_validate_json(fila[0]), fila[1]
 
+    def reclamar_ejecucion(self, nota_id, mensaje_id, presupuesto):
+        """Deja la reserva durable antes de iniciar trabajo que pueda interrumpirse."""
+        with closing(sqlite3.connect(self.ruta, timeout=presupuesto.reserva_cierre_s)) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            parte = db.execute("SELECT mensaje_id, estado, interacciones FROM partes WHERE nota_id = ?",
+                               (nota_id,)).fetchone()
+            if mensaje_id is None:
+                if parte:
+                    return None
+            elif not parte or parte[0] != mensaje_id or parte[1] not in {"borrador_pendiente", "aclaracion_pendiente"}:
+                return None
+            previo = db.execute("SELECT vence, consumo, estado FROM ejecucion_partes WHERE nota_id = ?",
+                                (nota_id,)).fetchone()
+            ahora = time.time()
+            consumo = ConsumoEjecucion.model_validate_json(previo[1]) if previo else ConsumoEjecucion()
+            interrumpida = bool(previo and previo[2] == "en_curso")
+            if interrumpida and previo[0] > ahora:
+                return None
+            if interrumpida:
+                consumo.activo_ms = max(consumo.activo_ms, int(presupuesto.tiempo_s * 1000))
+            if parte:
+                consumo.interacciones = parte[2]
+            identificador = uuid4().hex
+            vence = ahora + max(0, presupuesto.tiempo_s - consumo.activo_ms / 1000) + presupuesto.reserva_cierre_s
+            db.execute("""
+                INSERT INTO ejecucion_partes VALUES (?, ?, ?, ?, 'en_curso', NULL)
+                ON CONFLICT(nota_id) DO UPDATE SET ejecucion_id=excluded.ejecucion_id, vence=excluded.vence,
+                    consumo=excluded.consumo, estado=excluded.estado, motivo=NULL
+            """, (nota_id, identificador, vence, consumo.model_dump_json()))
+            recuperacion = "interrumpida" if interrumpida else "reversion" if previo and previo[2] == "reintentable" else None
+            return identificador, consumo, recuperacion
+
+    def estado_ejecucion(self, nota_id: str) -> EstadoEjecucion | None:
+        with closing(sqlite3.connect(self.ruta, timeout=0.25)) as db:
+            fila = db.execute("SELECT ejecucion_id, consumo, estado, motivo FROM ejecucion_partes WHERE nota_id = ?",
+                              (nota_id,)).fetchone()
+        return EstadoEjecucion(fila[0], ConsumoEjecucion.model_validate_json(fila[1]), *fila[2:]) if fila else None
+
+    @contextmanager
+    def _escritura(self, ejecucion):
+        normal = ejecucion is not None and ejecucion.motivo is None
+        timeout = 5.0
+        if ejecucion is not None:
+            timeout = ejecucion.presupuesto.reserva_cierre_s
+        if normal:
+            ejecucion.verificar()
+            timeout = min(timeout, ejecucion.restante())
+        with closing(sqlite3.connect(self.ruta, timeout=timeout)) as db, db:
+            if normal:
+                db.set_progress_handler(lambda: int(ejecucion.cancelada() or ejecucion.restante() <= 0), 200)
+            yield db
+            if normal:
+                ejecucion.verificar()
+
+    @staticmethod
+    def _cerrar_ejecucion(db, ejecucion, interacciones):
+        if ejecucion is None:
+            return
+        ejecucion.consumo.interacciones = interacciones
+        ejecucion.medir()
+        cambio = db.execute("""
+            UPDATE ejecucion_partes SET consumo=?, estado=?, motivo=?, vence=0
+            WHERE nota_id=? AND ejecucion_id=? AND estado='en_curso'
+        """, (ejecucion.consumo.model_dump_json(), ejecucion.estado, ejecucion.motivo,
+              ejecucion.nota_id, ejecucion.id))
+        if cambio.rowcount != 1:
+            raise CorteEjecucion("reserva_perdida")
+
+    def registrar_reversion(self, ejecucion):
+        """Registra el trabajo invertido después de un rollback conocido."""
+        ejecucion.estado, ejecucion.motivo = "reintentable", "persistencia_revertida"
+        with self._escritura(ejecucion) as db:
+            self._cerrar_ejecucion(db, ejecucion, ejecucion.consumo.interacciones)
+
     def guardar(
         self,
         nota: NotaRecorrida,
@@ -170,12 +264,14 @@ class AlmacenPartes:
         filas: list[FilaParte],
         mensaje: MensajeTablet | None,
         contexto: dict | None = None,
+        *,
+        ejecucion=None,
     ) -> bool:
         filas_json = _FILAS.dump_json(filas).decode("utf-8")
         mensaje_id = mensaje.id if mensaje is not None else None
         contexto_json = json.dumps(contexto or {}, ensure_ascii=False)
 
-        with closing(sqlite3.connect(self.ruta)) as db, db:
+        with self._escritura(ejecucion) as db:
             cursor = db.execute("""
                 INSERT INTO partes (nota_id, estado, filas, mensaje_id, contexto)
                 SELECT id, ?, ?, ?, ? FROM notas WHERE id = ? AND estado = 'completada'
@@ -185,6 +281,7 @@ class AlmacenPartes:
                 return False
             if mensaje is not None:
                 self._encolar_borrador(db, nota.id, 1, filas_json, contexto_json, mensaje)
+            self._cerrar_ejecucion(db, ejecucion, 0)
             return True
 
     def _encolar_borrador(
@@ -200,8 +297,8 @@ class AlmacenPartes:
         ):
             raise sqlite3.IntegrityError(f"Conflicto de mensaje de parte: {mensaje.id}")
 
-    def obtener(self, nota_id: str) -> ParteGuardado | None:
-        with closing(sqlite3.connect(self.ruta)) as db:
+    def obtener(self, nota_id: str, *, timeout: float = 5.0) -> ParteGuardado | None:
+        with closing(sqlite3.connect(self.ruta, timeout=timeout)) as db:
             fila = db.execute("""
                 SELECT notas.payload, partes.estado, partes.filas, partes.mensaje_id,
                        partes.version, partes.contexto, partes.interacciones
@@ -220,12 +317,12 @@ class AlmacenPartes:
             interacciones=fila[6],
         )
 
-    def buscar_por_mensaje(self, mensaje_id: str) -> ParteGuardado | None:
-        with closing(sqlite3.connect(self.ruta)) as db:
+    def buscar_por_mensaje(self, mensaje_id: str, *, timeout: float = 5.0) -> ParteGuardado | None:
+        with closing(sqlite3.connect(self.ruta, timeout=timeout)) as db:
             fila = db.execute(
                 "SELECT nota_id FROM borradores_parte WHERE mensaje_id = ?", (mensaje_id,)
             ).fetchone()
-        return self.obtener(fila[0]) if fila else None
+        return self.obtener(fila[0], timeout=timeout) if fila else None
 
     def guardar_respuesta(self, respuesta: RespuestaOperador) -> bool:
         contenido = json.dumps([
@@ -240,8 +337,8 @@ class AlmacenPartes:
             """, (respuesta.id, respuesta.mensaje_id, respuesta.model_dump_json(), contenido))
             return cursor.rowcount == 1
 
-    def siguiente_respuesta(self) -> tuple[RespuestaOperador, str | None] | None:
-        with closing(sqlite3.connect(self.ruta)) as db:
+    def siguiente_respuesta(self, *, timeout: float = 5.0) -> tuple[RespuestaOperador, str | None] | None:
+        with closing(sqlite3.connect(self.ruta, timeout=timeout)) as db:
             fila = db.execute("""
                 SELECT payload, resultado, texto_stt FROM respuestas_parte
                 WHERE resultado IS NULL OR resultado IN ('stt_listo', 'stt_agotado')
@@ -306,15 +403,9 @@ class AlmacenPartes:
             """, (fase, texto, intentos, time.time() + espera, detalle, tarea.respuesta.id, tarea.intento))
             return cambio.rowcount == 1
 
-    def aplicar_respuesta(
-        self, respuesta: RespuestaOperador, resultado: str, mensaje: MensajeTablet | None = None,
-        *, nuevo_estado: str | None = None, filas: list[FilaParte] | None = None,
-        contexto: dict | None = None, fase: str | None = None,
-    ) -> bool:
-        """Revalida el turno y registra el resultado y sus escrituras en un único commit."""
-        with closing(sqlite3.connect(self.ruta)) as db, db:
-            db.execute("BEGIN IMMEDIATE")
-            fila = db.execute("""
+    @staticmethod
+    def _turno(db, respuesta, fase):
+        return db.execute("""
                 SELECT p.nota_id, p.estado, p.mensaje_id, p.version, p.filas, p.contexto, p.interacciones,
                        EXISTS (
                            SELECT 1 FROM respuestas_parte otras
@@ -327,7 +418,24 @@ class AlmacenPartes:
                 LEFT JOIN borradores_parte b ON b.mensaje_id = r.mensaje_id
                 LEFT JOIN partes p ON p.nota_id = b.nota_id
                 WHERE r.id = ? AND r.mensaje_id = ? AND r.resultado IS ?
-            """, (respuesta.id, respuesta.mensaje_id, fase)).fetchone()
+        """, (respuesta.id, respuesta.mensaje_id, fase)).fetchone()
+
+    def respuesta_ignorable(self, respuesta, fase, *, timeout=0.25):
+        with closing(sqlite3.connect(self.ruta, timeout=timeout)) as db:
+            turno = self._turno(db, respuesta, fase)
+        return not turno or not turno[0] or turno[2] != respuesta.mensaje_id or turno[7] or turno[1] not in {
+            "borrador_pendiente", "aclaracion_pendiente",
+        }
+
+    def aplicar_respuesta(
+        self, respuesta: RespuestaOperador, resultado: str, mensaje: MensajeTablet | None = None,
+        *, nuevo_estado: str | None = None, filas: list[FilaParte] | None = None,
+        contexto: dict | None = None, fase: str | None = None, ejecucion=None,
+    ) -> bool:
+        """Revalida el turno y registra el resultado y sus escrituras en un único commit."""
+        with self._escritura(ejecucion) as db:
+            db.execute("BEGIN IMMEDIATE")
+            fila = self._turno(db, respuesta, fase)
             if fila is None:
                 return False
             nota_id, estado, vigente, version, filas_json, contexto_json, interacciones, duplicada = fila
@@ -372,4 +480,8 @@ class AlmacenPartes:
                 raise sqlite3.IntegrityError(f"No se registró la respuesta: {respuesta.id}")
             if resultado == "confirmada":
                 registrar_confirmacion_b1(db, nota_id, version, vigente, respuesta.id, filas_json)
+            if ejecucion is not None and resultado == "limite_interacciones":
+                ejecucion.estado = "revision_manual"
+                ejecucion.motivo = "limite_interacciones"
+            self._cerrar_ejecucion(db, ejecucion, interacciones or 0)
             return True

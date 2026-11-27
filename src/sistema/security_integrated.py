@@ -113,8 +113,9 @@ def main():
 
     logger.info("Cargando motor Whisper")
     motor = TranscripcionPrioritaria(WhisperLocal(modelo="base"), almacen.hay_seguridad_lista)
+    planta_partes = ClientePlanta(planta.url)
     worker_partes = WorkerPartes(
-        partes, planta.catalogo, historial=planta.historial,
+        partes, planta_partes.catalogo, historial=planta_partes.historial, fuentes_con_timeout=True,
         transcribir_respuesta=motor.transcribir_respuesta, hay_seguridad=almacen.hay_seguridad_lista,
     )
     worker_b1 = WorkerClasificacionB1(

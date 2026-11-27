@@ -23,19 +23,20 @@ class ClientePlanta:
         self._catalogo = None
         self._leer_json = leer_json
 
-    def _consultar_json(self, url: str, params: dict | None = None):
+    def _consultar_json(self, url: str, params: dict | None = None, *, timeout: float = 2.0):
         if self._leer_json is not None:
             return self._leer_json(url, params)
         opciones = {"params": params} if params is not None else {}
-        respuesta = httpx.get(url, timeout=2.0, **opciones)
+        respuesta = httpx.get(url, timeout=timeout, **opciones)
         respuesta.raise_for_status()
         return respuesta.json()
 
-    def catalogo(self, *, requerir_sensores: bool = False) -> dict:
+    def catalogo(self, *, requerir_sensores: bool = False, timeout: float | None = None) -> dict:
         cacheado = self._catalogo
         if cacheado is not None and (not requerir_sensores or "sensores" in cacheado):
             return cacheado
-        datos = self._consultar_json(f"{self.url}/api/planta")
+        opciones = {} if timeout is None else {"timeout": timeout}
+        datos = self._consultar_json(f"{self.url}/api/planta", **opciones)
         if not isinstance(datos, dict) or not isinstance(datos.get("equipos"), list):
             raise ValueError("Catálogo de equipos inválido")
         if not datos["equipos"]:
@@ -78,7 +79,9 @@ class ClientePlanta:
                 raise ValueError("Firma de foto B1 inválida")
             return mime, bytes(contenido)
 
-    def historial(self, tag: str, variable: str, hasta: datetime, *, desde: datetime | None = None) -> list[dict]:
+    def historial(
+        self, tag: str, variable: str, hasta: datetime, *, desde: datetime | None = None, timeout: float | None = None,
+    ) -> list[dict]:
         if hasta.utcoffset() is None or (desde is not None and desde.utcoffset() is None):
             raise ValueError("El historian requiere fechas con zona horaria")
         inicio = hasta - _VENTANA if desde is None else desde
@@ -89,7 +92,8 @@ class ClientePlanta:
         intentos = 2 if desde is None else 1
         for intento in range(intentos):
             try:
-                muestras = self._consultar_json(url, parametros)
+                opciones = {} if timeout is None else {"timeout": timeout}
+                muestras = self._consultar_json(url, parametros, **opciones)
                 if not isinstance(muestras, list):
                     raise ValueError("Respuesta del historian inválida")
                 return muestras
