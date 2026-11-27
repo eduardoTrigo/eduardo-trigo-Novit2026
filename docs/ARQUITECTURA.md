@@ -60,11 +60,15 @@ SQLite sigue siendo la fuente de notas, partes, episodios, evidencia y outbox. P
 
 SQLite registra una revisión pendiente en la misma transacción que cambia la nota, el parte o una respuesta. Un hilo independiente extrae una captura consistente, cierra la lectura SQLite y escribe en PostgreSQL. El reconocimiento local sigue al commit remoto y las revisiones menores o repetidas se descartan en PostgreSQL. La consulta por ID devuelve el documento remoto y el estado de sincronización respecto de SQLite. [Mini spec y política de memoria](SPEC_MEMORIA_CONVERSACIONAL.md)
 
+## Tools de consulta en el Issue #19
+
+El registro valida los argumentos antes de llamar a los handlers y publica JSON Schema de entrada y salida. Cada consulta HTTP reutiliza `ClientePlanta` con un lector que restringe destino, ruta, tamaño, plazo y reintentos. Inventario, stock de referencia, materiales y tareas se leen del recurso oficial empaquetado. La ruta de consulta es independiente del arranque y de los consumidores actuales de `ClientePlanta`. [Mini spec y catálogo](SPEC_TOOLS_PLANTA.md)
+
 ## Arquitectura propuesta para completar Entrega 1
 
 - **Parte de voz y tablet.** Agregar extracción validada a `FilaParte` a partir de la transcripción y de los datos de planta e historian. Descargar y asociar las fotos. Publicar el borrador en la tablet, procesar `planta/respuestas` y conservar la confirmación. Integrar este flujo sin demorar la alerta local.
 - **Estado de enlace y pendientes.** Derivar del estado efectivo del sistema los campos de enlace y pendientes del latido.
-- **Tools y MCP.** Incorporar herramientas de solo lectura con esquemas Pydantic estrictos sobre fuentes oficiales. Exponer al menos una por MCP y reutilizar su contrato de consulta.
+- **MCP y búsqueda en manuales.** Exponer al menos una tool de datos por MCP con su contrato de consulta. Incorporar la búsqueda en manuales con la recuperación documental.
 - **RAG y armado de contexto.** Indexar el corpus con metadatos y vigencia. Recuperar y citar secciones aplicables. El contexto combinará documentación con datos operativos de API o SQL para límites y stock.
 
 El análisis completo de las causas de un escalado y la generación de órdenes de trabajo corresponden a entregas posteriores.

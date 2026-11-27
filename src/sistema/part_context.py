@@ -18,17 +18,24 @@ _FIRMAS_FOTO = {"image/jpeg": b"\xff\xd8\xff", "image/png": b"\x89PNG\r\n\x1a\n"
 
 
 class ClientePlanta:
-    def __init__(self, url: str):
+    def __init__(self, url: str, *, leer_json=None):
         self.url = url.rstrip("/")
         self._catalogo = None
+        self._leer_json = leer_json
+
+    def _consultar_json(self, url: str, params: dict | None = None):
+        if self._leer_json is not None:
+            return self._leer_json(url, params)
+        opciones = {"params": params} if params is not None else {}
+        respuesta = httpx.get(url, timeout=2.0, **opciones)
+        respuesta.raise_for_status()
+        return respuesta.json()
 
     def catalogo(self, *, requerir_sensores: bool = False) -> dict:
         cacheado = self._catalogo
         if cacheado is not None and (not requerir_sensores or "sensores" in cacheado):
             return cacheado
-        respuesta = httpx.get(f"{self.url}/api/planta", timeout=2.0)
-        respuesta.raise_for_status()
-        datos = respuesta.json()
+        datos = self._consultar_json(f"{self.url}/api/planta")
         if not isinstance(datos, dict) or not isinstance(datos.get("equipos"), list):
             raise ValueError("Catálogo de equipos inválido")
         if not datos["equipos"]:
@@ -82,15 +89,28 @@ class ClientePlanta:
         intentos = 2 if desde is None else 1
         for intento in range(intentos):
             try:
-                respuesta = httpx.get(url, params=parametros, timeout=2.0)
-                respuesta.raise_for_status()
-                muestras = respuesta.json()
+                muestras = self._consultar_json(url, parametros)
                 if not isinstance(muestras, list):
                     raise ValueError("Respuesta del historian inválida")
                 return muestras
             except (httpx.TimeoutException, httpx.NetworkError):
                 if intento == intentos - 1:
                     raise
+
+    def historial_ordenes(
+        self, *, equipo: str | None = None, desde: datetime | None = None, hasta: datetime | None = None,
+    ) -> list[dict]:
+        parametros = {}
+        if equipo is not None:
+            parametros["equipo"] = equipo
+        if desde is not None:
+            parametros["desde"] = desde.isoformat()
+        if hasta is not None:
+            parametros["hasta"] = hasta.isoformat()
+        ordenes = self._consultar_json(f"{self.url}/api/historial-ordenes", parametros)
+        if not isinstance(ordenes, list):
+            raise ValueError("Respuesta del historial de órdenes inválida")
+        return ordenes
 
 
 def _finito(valor):

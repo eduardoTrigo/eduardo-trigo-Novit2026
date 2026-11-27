@@ -94,6 +94,12 @@ docker compose config --quiet
 docker compose up -d --build
 ```
 
+### Proxy del build y del agente
+
+Compose asigna `HTTP_PROXY=http://enlace:3128` y `HTTPS_PROXY=http://enlace:3128` al proceso del agente en `planta-lan`. El hostname `enlace` se resuelve dentro de esa red. El entorno de compilación usa acceso directo o un proxy del host accesible desde el builder. Si aparece `lookup enlace` durante el build, retira de tu `.env` las entradas heredadas del proxy interno y desexporta las variables `HTTP_PROXY` y `HTTPS_PROXY` de la sesión si apuntan a `enlace`. Conserva el proxy de runtime en Compose. El `.env` de Compose sirve para interpolación y configurarlo ahí no configura por sí solo el proxy de Docker. [Docker CLI y proxy](https://docs.docker.com/engine/cli/proxy/) · [Interpolación de Compose](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/)
+
+La verificación del Issue #19 cubrió la resolución de Compose y el build del Dockerfile con acceso directo en una etiqueta de prueba. Las configuraciones con proxy corporativo requieren una conexión disponible desde su propio builder.
+
 ### 3. Verificar el estado
 
 ```bash
@@ -122,6 +128,26 @@ docker compose stop agente-planta postgres
 - API Swagger: http://localhost:8100/docs
 - Broker MQTT desde Windows: localhost:1883
 - Broker MQTT desde Docker: broker:1883
+
+## Tools de consulta de planta
+
+`CatalogoToolsPlanta.catalogo()` devuelve el nombre, la descripción y los esquemas JSON de entrada y salida de cada tool. `ejecutar()` devuelve los resultados estructurados o lanza `ErrorTool` con un código estable. Desde un consumidor asíncrono, usa `asyncio.to_thread` para ejecutar consultas HTTP. [Contratos, fuentes y límites](docs/SPEC_TOOLS_PLANTA.md)
+
+Con el simulador activo, los ejemplos locales consultan equipos y el stock de referencia. Desde el contenedor, usa el destino predeterminado `http://sim:8100`.
+
+```bash
+python -c 'from sistema.plant_tools import CatalogoToolsPlanta; c = CatalogoToolsPlanta("http://127.0.0.1:8100"); print(c.ejecutar("consultar_equipos", {"tag": "B-102"}))'
+python -c 'from sistema.plant_tools import CatalogoToolsPlanta; print(CatalogoToolsPlanta().ejecutar("consultar_stock", {"codigo": "TX-ROD-CIG", "almacen": "yacimiento"}))'
+PIA3_TOOLS_INTEGRATION=1 python -m pytest -q tests/test_plant_tools_integration.py
+```
+
+El catálogo se distribuye con el paquete Python y la imagen Docker. Su contenido deriva de los blobs oficiales del commit indicado. Para regenerarlo, usa el script desde un entorno que ya disponga de PyYAML. La ejecución de las tools lee el JSON empaquetado con la biblioteca estándar. [Generador](scripts/actualizar_catalogo_planta.py) · [Recurso y huellas de origen](src/sistema/recursos/catalogo_planta.json)
+
+```bash
+python scripts/actualizar_catalogo_planta.py ../academia2026-tp ab65b95e911731351dba395817a74a8cc60da2b2
+```
+
+Al actualizar el SHA, revisa el diff del recurso y repite las pruebas de contratos e integración. El stock es el de referencia publicado por Novit.
 
 ## PostgreSQL 16 con pgvector
 

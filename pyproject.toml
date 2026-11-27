@@ -32,3 +32,6 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+sistema = ["recursos/*.json"]

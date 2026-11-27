@@ -39,3 +39,9 @@ Este registro conserva el motivo y el estado de cada decisión. El seguimiento d
 - **Contexto y justificación** · La línea de base usa Markdown y GitHub Issues. Un Issue funcional permitirá evaluar si OpenSpec mejora la trazabilidad y la revisión de cambios frente al flujo actual. La mini spec del parte sigue siendo un requisito de Entrega 1 independiente de la herramienta elegida.
 - **Riesgo** · La evaluación puede sumar trabajo o duplicar documentos. Conviene juzgarla por la claridad del cambio y la facilidad de revisar la aceptación.
 - **Evidencia y referencia** · [Issue #7](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/issues/7) y requisito de mini spec en [PLAN.md](PLAN.md).
+
+## DT-06 · Usar contratos estrictos y un catálogo oficial empaquetado
+
+- **Estado** · Adoptada para el Issue #19.
+- **Contexto y justificación** · El simulador publica equipos e históricos por HTTP. Para materiales y tareas se empaqueta una copia de referencia con commit y huellas de origen. Esto permite consultar durante un corte de enlace y conservar las diferencias por equipo de tareas que comparten código.
+- **Garantías y límites** · El registro explícito valida los argumentos antes de acceder a la fuente. El lector HTTP tiene destinos, tamaños, plazos y reintentos acotados. Una actualización de datos requiere regenerar el recurso desde el SHA oficial y comprobar la compatibilidad con el simulador desplegado. [Contratos y procedimiento](SPEC_TOOLS_PLANTA.md) · [Issue #19](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/issues/19)
