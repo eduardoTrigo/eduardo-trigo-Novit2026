@@ -55,7 +55,11 @@ Validar JSON de entrada con los modelos oficiales y construir cada salida con es
 
 ### Fotografías
 
-Cada referencia se registra con identificador derivado de la nota y la ruta, timestamp, estado de descarga, procedencia y motivo. Una referencia única puede asociarse a `(tag, variable)` si la mención de la foto identifica un equipo y una sola fila compatible. Varias rutas sin correspondencia explícita quedan en la nota. Una corrección de valor conserva el vínculo y un cambio de identidad lo devuelve a la nota. Las versiones anteriores conservan su propio vínculo.
+La cláusula puramente fotográfica queda fuera de la extracción de lecturas. En «Saqué foto de la tres, tiene las correas flojas», la segunda cláusula refiere a B-103 y conserva la observación. Si la lectura nombra otro equipo, se usa esa referencia. «Saqué foto de las correas de la tres» por sí sola conserva la referencia fotográfica.
+
+Cada referencia registra un identificador derivado de la nota y la ruta, timestamp, estado de descarga, procedencia y motivo. Si una mención inequívoca identifica un único `(tag, variable)` que todavía falta, se guarda como `objetivo_pendiente` junto con el fragmento original. Tras una aclaración, LangChain compara ese objetivo con las filas validadas dentro del presupuesto del turno. Si coincide, el worker guarda la asociación en la misma transacción que las filas y el borrador. Los turnos posteriores reutilizan los metadatos y el binario ya persistidos.
+
+Una referencia ambigua o varias rutas sin correspondencia individual quedan en la nota. Una corrección de valor conserva el vínculo y un cambio de identidad lo invalida. Una asociación invalidada conserva ese estado aunque el TAG original vuelva a aparecer. Las versiones anteriores conservan su contexto. Si falta presupuesto para reconsiderar la foto, el objetivo sigue pendiente. Los registros anteriores que carecen del objetivo opcional siguen siendo legibles y conservan su estado.
 
 El descargador comparte las validaciones de B1. Para partes admite las rutas relativas `/media/fotos/…` del simulador local, con prefijo y terminador JPEG o PNG y verificación de longitud cuando está declarada. El worker admite tres descargas por nota, 512 KiB por archivo y 750 ms por intento. Usa un carril aislado y omite la descarga cuando falta presupuesto. Un 404, un timeout o un formato inválido conserva la ruta y deja que el parte continúe.
 

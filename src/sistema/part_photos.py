@@ -28,9 +28,16 @@ _CUES = {
     "temperatura_motor_ir": r"\bmotor\b",
     "nivel_aceite_visor": r"\bvisor\b",
     "estado_correas": r"\bcorreas\b",
-    "nivel": r"\bnivel\b",
+    "nivel": r"\bnivel\b(?!\s+(?:de|del|en)\s+(?:el\s+)?(?:aceite|visor)\b)",
 }
 _Hash = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+
+
+class ObjetivoFoto(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    tag: str
+    variable: str
 
 
 class FotoParte(BaseModel):
@@ -46,6 +53,7 @@ class FotoParte(BaseModel):
     procedencia: Literal["nota", "mencion_explicita"] = "nota"
     evidencia: str | None = None
     motivo: str | None = "sin_mencion_inequivoca"
+    objetivo_pendiente: ObjetivoFoto | None = None
     estado_descarga: Literal[
         "sin_fuente", "invalida", "ausente", "timeout", "no_disponible", "omitida_limite",
         "omitida_presupuesto", "descargada",
@@ -62,6 +70,9 @@ class FotoParte(BaseModel):
                 raise ValueError("Asociación a fila sin evidencia")
         elif self.tag is not None or self.variable is not None or self.procedencia != "nota" or not self.motivo:
             raise ValueError("Asociación a nota incoherente")
+        pendiente = self.motivo == "fila_pendiente"
+        if pendiente != (self.objetivo_pendiente is not None) or (pendiente and not self.evidencia):
+            raise ValueError("Asociación pendiente sin objetivo explícito")
         binario = (self.sha256, self.mime, self.bytes)
         if (self.estado_descarga == "descargada" and not all(binario)
                 or self.estado_descarga != "descargada" and any(binario)):
@@ -75,11 +86,13 @@ def _asociacion(texto, catalogo, filas):
         normal = normalizar_texto(frase)
         if mencion := _MENCION.search(normal):
             menciones.append((frase.strip(), normal[:mencion.start()], normal[mencion.end():]))
-    if len(menciones) != 1:
+    if not menciones:
         return {}
+    if len(menciones) > 1:
+        return {"motivo": "mencion_ambigua"}
     frase, prefijo, objetivo = menciones[0]
     if re.search(r"\b(?:foto|fotos|no|o|quizas|creo)\b", prefijo + " " + objetivo):
-        return {}
+        return {"motivo": "mencion_ambigua"}
     aliases = indexar_aliases(catalogo)
     if not aliases:
         return {}
@@ -88,21 +101,43 @@ def _asociacion(texto, catalogo, filas):
     referencias = re.findall(r"(?<![\w-])" + patron_aliases, objetivo)
     objetivos = re.findall(r"(?:^\s*|\b(?:de|del)\s+)" + patron_aliases, objetivo)
     tags = {tag for alias in referencias for tag in aliases[alias]}
-    if not objetivos or len(tags) != 1:
+    variables = {variable for variable, patron in _CUES.items() if re.search(patron, objetivo)}
+    if len(tags) > 1 or len(variables) > 1:
+        return {"motivo": "mencion_ambigua"}
+    if not objetivos or not tags or not variables:
         return {}
-    candidatas = [f for f in filas if f.tag in tags and re.search(_CUES.get(f.variable, r"(?!)"), objetivo)]
-    if len(candidatas) != 1:
-        return {}
-    fila = candidatas[0]
-    return {"tag": fila.tag, "variable": fila.variable, "estado_asociacion": "fila",
-            "procedencia": "mencion_explicita", "evidencia": frase, "motivo": None}
+    metadata = {"objetivo_pendiente": {"tag": tags.pop(), "variable": variables.pop()},
+                "evidencia": frase, "motivo": "fila_pendiente"}
+    return _vincular(metadata, {(f.tag, f.variable) for f in filas})
+
+
+def _vincular(foto, claves):
+    objetivo = foto.get("objetivo_pendiente")
+    if foto.get("motivo") == "fila_pendiente" and objetivo and (objetivo["tag"], objetivo["variable"]) in claves:
+        return foto | objetivo | {"estado_asociacion": "fila", "procedencia": "mencion_explicita",
+                                  "motivo": None, "objetivo_pendiente": None}
+    return foto
+
+
+def hay_presupuesto_asociacion(control):
+    return control.plazo_lectura() > 0 and control.consumo.pasos < control.presupuesto.pasos - 1
+
+
+def reconsiderar_fotos(fotos: list[dict], filas: list[FilaParte]) -> list[dict]:
+    claves = {(f.tag, f.variable) for f in filas}
+    return [_vincular(foto, claves) for foto in fotos]
 
 
 def capturar_fotos(nota: NotaRecorrida, texto, catalogo, filas, descargar, control, aislador):
     rutas = list(dict.fromkeys(nota.fotos))
-    asociacion = _asociacion(texto, catalogo, filas) if len(rutas) == 1 and ruta_foto_valida(rutas[0]) else {}
+    asociacion = {}
     if len(rutas) > 1:
         asociacion = {"motivo": "varias_referencias_sin_correspondencia"}
+    elif rutas and texto and catalogo and ruta_foto_valida(rutas[0]):
+        if hay_presupuesto_asociacion(control):
+            asociacion = control.paso("analizar_asociacion_foto", lambda: _asociacion(texto, catalogo, filas))
+        else:
+            asociacion = {"motivo": "asociacion_omitida_presupuesto"}
     fotos, archivos = [], {}
     validas = 0
     for ruta in rutas:

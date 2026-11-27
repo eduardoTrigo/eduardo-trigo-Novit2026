@@ -21,7 +21,7 @@ from sistema.part_clarification import preguntar, resolver
 from sistema.part_context import _VARIABLE_SENSOR, _VENTANA, verificar_lectura
 from sistema.part_extraction import extraer_parte
 from sistema.part_messages import crear_borrador
-from sistema.part_photos import capturar_fotos
+from sistema.part_photos import capturar_fotos, hay_presupuesto_asociacion, reconsiderar_fotos
 from sistema.part_reply import interpretar_respuesta
 from sistema.part_store import ParteGuardado
 from sistema.plant_tool_models import Equipo, HistorialSensores, Muestra, Pagina, Sensor
@@ -306,6 +306,12 @@ class AgentePartes:
             )
             turno.plan.contexto = (turno.plan.contexto or {}) | {"fotos": fotos}
             turno.plan.archivos_fotos = archivos
+        elif turno.plan.filas and turno.plan.contexto:
+            fotos = turno.plan.contexto.get("fotos", [])
+            if any(f.get("motivo") == "fila_pendiente" for f in fotos) and hay_presupuesto_asociacion(turno.control):
+                turno.plan.contexto["fotos"] = turno.control.paso(
+                    "reconsiderar_asociacion_foto", lambda: reconsiderar_fotos(fotos, turno.plan.filas),
+                )
         return turno.plan
 
     def _proponer(self, turno):

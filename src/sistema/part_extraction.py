@@ -37,10 +37,17 @@ _NUMEROS = re.compile(
     rf"(?:\s+y\s+medio\b)?"
 )
 _FRASES = re.compile(r"[!?;\n]+|(?<!\d)\.|\.(?!\d)")
-_SOLO_FOTO = re.compile(
-    r"\s*(?:le\s+)?(?:saque|tome|adjunte|dejo)\s+(?:una\s+)?fotos?\b"
-    r"(?:(?!\b(?:parad[ao]|disparad[ao]|gotea|pierde|vibra|suena|hace ruido)\b).)*"
+_TOMA_FOTO = re.compile(
+    r"(?:^|,|\by\b)\s*(?:(?:le\s+)?(?:saque|tome|adjunte|dejo)\s+(?:una\s+)?fotos?\b|"
+    r"fotos?\b(?=\s+d(?:e|el)\b))"
 )
+_PREDICADO = (
+    r"(?:(?:que\s+)?(?:no\s+)?(?:tiene|esta|estaba|arranca|parad[ao]|disparad[ao]|"
+    r"dio|medio|marco|gotea|pierde|vibra|suena|hace)\b|[+-]?\d)"
+)
+_LECTURA_TRAS_FOTO = re.compile(rf"\s*(?:{_PREDICADO}|(?:menos\s+)?{_NUMERAL})")
+_CORTE_FOTO = re.compile(r"(?<!\d),|,(?!\d)|\by\s+(?=" + _PREDICADO + ")")
+_UBICACION_FOTO = re.compile(r"\b(?:cerca|junto|delante|detras|enfrente|al lado|donde)\b")
 _CLAUSULAS = re.compile(
     r"(?<!\bmenos)(?:(?<!\d),|,(?!\d))|\by\s+(?=(?:(?:el|la|las)\s+)?"
     r"(?:rodamiento|motor|temperatura|presion|descarga|diferencial|nivel|correas|"
@@ -289,6 +296,32 @@ def interpretar_medicion(
     return valor, unidad
 
 
+def _frases_del_parte(texto, referencias):
+    alias = referencias.pattern
+    sujeto_foto = re.compile(rf"\b(?:de|del|a)\s+(?P<sujeto>{alias}(?:\s+(?:y|e|o|u|/)\s+{alias})*)\s*$")
+    for frase in _FRASES.split(texto):
+        toma = _TOMA_FOTO.search(frase)
+        if toma is None:
+            yield frase
+            continue
+        if previo := frase[:toma.start()].strip():
+            yield previo
+        complemento = frase[toma.end():]
+        corte = _CORTE_FOTO.search(complemento)
+        if corte is not None:
+            referencia, lectura = complemento[:corte.start()], complemento[corte.end():].strip()
+        else:
+            fin = next((m.end() for m in referencias.finditer(complemento)
+                        if _LECTURA_TRAS_FOTO.match(complemento, m.end())), None)
+            if fin is None:
+                continue
+            referencia, lectura = complemento[:fin], complemento[fin:].strip()
+        sujeto = sujeto_foto.search(referencia)
+        if sujeto and not referencias.match(lectura) and not _UBICACION_FOTO.search(referencia):
+            lectura = f'{sujeto["sujeto"]} {lectura}'
+        yield lectura
+
+
 def extraer_parte(texto: str, catalogo: dict) -> ResultadoExtraccion:
     """Devuelve filas inequívocas y señala lecturas que requieren revisión."""
     alias = indexar_aliases(catalogo)
@@ -308,11 +341,7 @@ def extraer_parte(texto: str, catalogo: dict) -> ResultadoExtraccion:
     texto = re.sub(r"\bmenos\s+,", "menos,", normalizar_texto(texto))
     # La coma de «parada, en reserva» pertenece a la misma observación de estado.
     texto = re.sub(r"\b(parad[ao]),\s*(en reserva)\b", r"\1 \2", texto)
-    for frase in _FRASES.split(texto):
-        if _SOLO_FOTO.fullmatch(frase) and not any(
-            n.group() not in {"un", "una"} for n in _NUMEROS.finditer(referencias.sub("", frase))
-        ):
-            continue
+    for frase in _frases_del_parte(texto, referencias):
         equipo = None
         candidatos = []
         fragmentos = referencias.split(frase)

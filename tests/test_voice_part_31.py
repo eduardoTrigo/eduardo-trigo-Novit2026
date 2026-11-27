@@ -1,6 +1,8 @@
 import time
 from datetime import timedelta
 
+import pytest
+
 from sistema.execution_budget import ConsumoEjecucion, ControlEjecucion, PresupuestoEjecucion
 from sistema.part_agent import AgentePartes
 from sistema.part_clarification import resolver
@@ -17,6 +19,44 @@ def derivar(texto, **kwargs):
     control = ControlEjecucion(nota.id, "prueba", PresupuestoEjecucion(), ConsumoEjecucion(),
                                inicio=time.monotonic(), reloj=time.monotonic, cancelada=lambda: False)
     return AgentePartes(definicion_planta, **kwargs).nota(control, nota, texto)
+
+
+@pytest.mark.parametrize(("texto", "variable", "observacion"), [
+    ("Saqué foto de la tres, tiene las correas flojas.", "estado_correas", "tiene las correas flojas"),
+    ("Saqué foto de la tres y tiene el visor de aceite bajo.", "nivel_aceite_visor",
+     "tiene el visor de aceite bajo"),
+    ("Saqué foto de la tres, no arranca.", "estado", "no arranca"),
+    ("Tomé una foto de la tres que tiene las correas flojas.", "estado_correas", "que tiene las correas flojas"),
+    ("Saqué foto de la tres parada en reserva.", "estado", "parada en reserva"),
+])
+def test_foto_y_observacion_en_la_misma_frase(texto, variable, observacion):
+    plan = derivar(texto)
+    fila, = plan.filas
+    assert plan.estado == "borrador_pendiente"
+    assert (fila.tag, fila.variable, fila.valor, fila.unidad, fila.observacion) == (
+        "B-103", variable, None, None, observacion,
+    )
+
+
+@pytest.mark.parametrize(("texto", "estado", "lecturas"), [
+    ("Saqué foto de las correas de la tres.", "sin_contenido", []),
+    ("Foto de las correas de la tres.", "sin_contenido", []),
+    ("Saqué foto de la dos, está en 1640 psi de descarga.", "borrador_pendiente",
+     [("B-102", "presion_descarga_local", 1640)]),
+    ("Saqué foto de la dos mil seiscientos cuarenta psi de descarga.", "borrador_pendiente",
+     [("B-102", "presion_descarga_local", 1640)]),
+    ("Saqué foto de las correas de la tres, la dos tiene ruido. La uno 112 kilos de descarga.",
+     "borrador_pendiente", [("B-102", "ruido", None), ("B-101", "presion_descarga_local", 112)]),
+    ("Saqué foto de la bomba, tiene las correas flojas.", "aclaracion_pendiente", []),
+    ("Saqué foto de la tres o la dos, tiene las correas flojas.", "aclaracion_pendiente", []),
+    ("Saqué foto de la tres, no está en 115 bar de descarga.", "revision_manual", []),
+])
+def test_clausula_fotografica_conserva_limites_de_la_lectura(texto, estado, lecturas):
+    plan = derivar(texto)
+    assert plan.estado == estado
+    assert [(f.tag, f.variable, f.valor) for f in plan.filas] == lecturas
+    if estado == "aclaracion_pendiente":
+        assert plan.contexto["pendientes"][0]["tipo"] == "equipo"
 
 
 def test_lectura_mixta_con_stt_imperfecto_conserva_filas_y_pregunta_equipo_y_unidad():

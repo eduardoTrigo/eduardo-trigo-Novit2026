@@ -60,3 +60,21 @@ python scripts/evaluar_parte_issue31.py $captura5B ../academia2026-tp/datos/plan
 - **Configuración y diff.** `docker compose config --quiet` y `git diff --check` terminaron correctamente. Los procedimientos aislados conservaron sus datos y no ejecutaron el corrector.
 
 Quedan pendientes la medición integral desde la emisión de la nota, el recorrido con voz humana real hasta la confirmación y la nueva medición oficial de A1–A4. CT-1 y RG-1 conservan su estado parcial y la autorización oficial de modelos sigue pendiente. Si la asociación es incierta, la foto queda en la nota. Si se alcanza el límite de almacenamiento, quedan la referencia, su asociación y el estado de descarga omitida. [Especificación y recuperación de evidencia](SPEC_PARTE_VOZ.md) · [Plan de Entrega 1](PLAN.md)
+
+## Regresiones del PR #32
+
+La revisión partió de `2b5ca1b` en `feat/31-voice-part-improvements`, con el árbol limpio. Las regresiones iniciales dieron siete fallos y tres casos de control aprobados. [Observaciones cualitativas](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/pull/32#discussion_r4719680075) · [Asociación posterior a una aclaración](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/pull/32#discussion_r4719680092)
+
+| Entrada | En `2b5ca1b` | Con la corrección |
+| --- | --- | --- |
+| «Saqué foto de la tres, tiene las correas flojas» | El filtro descartaba la frase completa. | El borrador incluye `B-103/estado_correas`, valor y unidad nulos y la observación «tiene las correas flojas». |
+| «Saqué foto de las correas de la tres» | La referencia quedaba fuera de las lecturas. | La referencia se conserva a nivel de nota y el parte queda sin contenido reportable. |
+| «La dos 1640 pc de descarga. Saqué foto del manómetro de descarga de la dos» | La foto quedaba a nivel de nota incluso después de responder «psi». | La primera versión guarda el objetivo pendiente. Tras la aclaración, la segunda vincula la foto a `B-102/presion_descarga_local`. |
+
+Las pruebas integradas ejercitaron el descargador real del worker con transporte HTTP controlado. Tras reabrir SQLite se resolvieron una duda de unidad y una de valor. En cada flujo se registró un solo GET, se mantuvieron la identidad, SHA-256, ruta, timestamp, MIME, tamaño, estado y evidencia, y el parte se confirmó con una respuesta explícita. Se verificaron respuestas duplicadas y desfasadas, ambigüedad, varias fotos, cambios de TAG y el límite de pasos e interacciones. Los registros previos sin un objetivo guardado siguen siendo legibles y conservan su estado.
+
+En PostgreSQL 16 aislado, las siete integraciones aprobaron. La proyección guardó el objetivo pendiente en el primer turno y la asociación resuelta en el borrador siguiente y en el parte confirmado. El contenido binario permaneció en SQLite.
+
+La suite completa con `PIA3_RAG_CORPUS` terminó con 628 pruebas aprobadas y 20 omitidas. La integración nueva se ejecutó en la pasada separada de PostgreSQL. También pasaron `docker compose config --quiet` y `git diff --check`.
+
+La ejecución del evaluador existente sobre las mismas 13 notas, tanto con STT archivado como con referencia, dio la misma salida para `2b5ca1b` y para la corrección. Con STT se mantuvieron 11/13 borradores, 23/24 en TAG y variable, 20/22 en valor, 21/22 en unidad y 9 confirmaciones virtuales. La prueba de regresión y la evaluación dirigida usan casos y métricas propios de este incremento. Los informes históricos conservan sus resultados oficiales.

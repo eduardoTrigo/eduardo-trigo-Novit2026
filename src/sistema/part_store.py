@@ -487,9 +487,12 @@ class AlmacenPartes:
                 if resultado == "confirmada" and estado != "borrador_pendiente":
                     resultado = "insuficiente"
                 interacciones += 1
+                limite = interacciones >= self.MAX_INTERACCIONES and (mensaje is not None or resultado == "insuficiente")
                 if contexto is not None:
+                    if limite and "fotos" in contexto:
+                        contexto = contexto | {"fotos": json.loads(contexto_json).get("fotos", [])}
                     contexto_json = json.dumps(contexto, ensure_ascii=False)
-                if interacciones >= self.MAX_INTERACCIONES and (mensaje is not None or resultado == "insuficiente"):
+                if limite:
                     nuevo_estado = "revision_manual"
                     resultado = "limite_interacciones"
                 elif resultado in {"confirmada", "rechazada"}:

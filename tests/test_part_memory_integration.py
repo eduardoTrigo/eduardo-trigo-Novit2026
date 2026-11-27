@@ -97,6 +97,36 @@ def test_persiste_conversacion_real_del_worker_y_recupera_tras_fallos(tmp_path, 
     assert "contenido" not in foto
 
 
+def test_proyecta_objetivo_pendiente_y_asociacion_resuelta_en_versiones_distintas(tmp_path):
+    notas, _, _, partes, _ = preparar(tmp_path)
+    nota = crear_nota().model_copy(update={"id": f"NOTA-MEM-{uuid4().hex}",
+                                         "fotos": ["/media/fotos/memoria-aclarada.jpg"]})
+    texto = "La dos 1640 pc de descarga. Saqué foto del manómetro de descarga de la dos."
+    transcribir_nota(notas, nota, texto)
+    binario = b"\xff\xd8\xffprueba\xff\xd9"
+    worker = WorkerPartes(partes, definicion_planta, foto=lambda ruta, *, plazo: ("image/jpeg", binario))
+    assert worker.procesar_siguiente()
+    remoto = RepositorioMemoriaPostgres(ConfiguracionPostgres.desde_entorno())
+    memoria = WorkerMemoria(AlmacenMemoriaLocal(partes.ruta), remoto)
+    assert memoria.sincronizar_siguiente()
+    pendiente = remoto.obtener(nota.id).documento["parte"]["contexto"]["fotos"][0]
+    assert pendiente["estado_asociacion"] == "nota" and pendiente["motivo"] == "fila_pendiente"
+
+    _, _, _, partes, worker = preparar(tmp_path)
+    procesar(partes, worker, respuesta(partes.obtener(nota.id), "psi", identificador=f"RESP-{uuid4().hex}"))
+    procesar(partes, worker, respuesta(partes.obtener(nota.id), "Confirmo", identificador=f"RESP-{uuid4().hex}"))
+    assert memoria.sincronizar_siguiente()
+    documento = remoto.obtener(nota.id).documento
+    assert documento["parte"]["estado"] == "confirmado"
+    inicial, final = [b["contexto"]["fotos"][0] for b in documento["borradores"]]
+    assert inicial == pendiente
+    assert (final["estado_asociacion"], final["tag"], final["variable"]) == (
+        "fila", "B-102", "presion_descarga_local",
+    )
+    assert final["id"] == inicial["id"] and final["sha256"] == inicial["sha256"]
+    assert documento["parte"]["contexto"]["fotos"] == [final]
+
+
 def test_rol_de_aplicacion_solo_puede_leer_y_proyectar():
     config = ConfiguracionPostgres.desde_entorno()
     with conectar_postgres(config) as db:

@@ -9,11 +9,11 @@ import pytest
 from sistema.part_context import ClientePlanta, MAX_BYTES_FOTO_B1
 from sistema.execution_budget import PresupuestoEjecucion
 from sistema.part_memory_store import AlmacenMemoriaLocal
-from sistema.part_photos import capturar_fotos
+from sistema.part_photos import capturar_fotos, reconsiderar_fotos
 from sistema.part_worker import WorkerPartes
 from test_part_extraction import definicion_planta
 from test_part_messages import preparar, transcribir_nota
-from test_part_workflow import procesar, respuesta
+from test_part_workflow import procesar, respuesta, resultado
 from test_security_messages import crear_nota
 
 
@@ -21,6 +21,7 @@ FOTO = "/media/fotos/prueba.jpg"
 JPEG = b"\xff\xd8\xffprueba\xff\xd9"
 NOTA_CON_FOTO = ("La uno 112 kilos de descarga. La dos gotea por la empaquetadura. "
                  "Saqué foto de la empaquetadura de la dos.")
+NOTA_UNIDAD = "La dos 1640 pc de descarga. Saqué foto del manómetro de descarga de la dos."
 
 
 @pytest.mark.parametrize(("base", "ruta"), [
@@ -141,8 +142,11 @@ def test_rectificacion_de_equipo_revalida_asociacion_sin_reasignar_la_foto(tmp_p
     anterior, nueva = inicial.contexto["fotos"][0], corregido.contexto["fotos"][0]
     assert nueva["estado_asociacion"] == "nota" and nueva["motivo"] == "cambio_identidad_fila"
     assert nueva["id"] == anterior["id"] and nueva["sha256"] == anterior["sha256"]
+    correccion = respuesta(corregido, "Eso de 1640 era de la dos, no de la tres.", identificador="VOLVER")
+    procesar(partes, worker, correccion)
+    assert partes.obtener(nota.id).contexto["fotos"] == [nueva]
     captura = AlmacenMemoriaLocal(partes.ruta).siguiente().documento
-    assert [b["contexto"]["fotos"][0] for b in captura["borradores"]] == [anterior, nueva]
+    assert [b["contexto"]["fotos"][0] for b in captura["borradores"]] == [anterior, nueva, nueva]
 
 
 def test_sin_pasos_para_foto_conserva_borrador_y_presupuesto_de_cierre(tmp_path):
@@ -171,3 +175,102 @@ def test_metadata_conserva_timestamp_original_aun_si_no_incluye_offset():
     nota = nota.model_copy(update={"fotos": [FOTO], "ts": original})
     fotos, archivos = capturar_fotos(nota, "", {}, [], None, None, None)
     assert fotos[0]["ts"] == original.isoformat() and not archivos
+
+
+def test_foto_ya_persistida_sin_objetivo_conserva_sus_metadatos():
+    nota = crear_nota().model_copy(update={"fotos": [FOTO]})
+    fotos, _ = capturar_fotos(nota, "", {}, [], None, None, None)
+    fotos[0].pop("objetivo_pendiente")
+    assert reconsiderar_fotos(fotos, []) == fotos
+
+
+@pytest.mark.parametrize(("texto", "tipo", "texto_respuesta", "tag", "variable"), [
+    (NOTA_UNIDAD, "unidad", "psi", "B-102", "presion_descarga_local"),
+    ("El filtro A me dio dieciocho de diferencial. Saqué foto del manómetro diferencial del F-201A.",
+     "valor", "uno coma ocho", "F-201A", "presion_diferencial"),
+])
+def test_aclaracion_asocia_foto_tras_reapertura_sin_descargar_de_nuevo(
+    tmp_path, monkeypatch, texto, tipo, texto_respuesta, tag, variable,
+):
+    @contextmanager
+    def http_foto(metodo, url, **opciones):
+        yield httpx.Response(200, headers={"content-type": "image/jpeg",
+                                          "content-length": str(len(JPEG))},
+                             content=JPEG, request=httpx.Request(metodo, url))
+
+    stream = MagicMock(side_effect=http_foto)
+    monkeypatch.setattr(httpx, "stream", stream)
+    descargar = ClientePlanta("http://sim:8100").foto_parte
+    nota, _, _, partes, _ = iniciar(tmp_path, texto, [FOTO], descargar)
+    inicial = partes.obtener(nota.id)
+    assert inicial.estado == "aclaracion_pendiente" and inicial.contexto["pendientes"][0]["tipo"] == tipo
+    anterior, = inicial.contexto["fotos"]
+    assert anterior["estado_asociacion"] == "nota" and anterior["estado_descarga"] == "descargada"
+    assert anterior["motivo"] == "fila_pendiente"
+    assert anterior["evidencia"]
+    assert partes.obtener_foto(anterior["sha256"]) == ("image/jpeg", JPEG)
+
+    _, _, _, partes, _ = preparar(tmp_path)
+    worker = WorkerPartes(partes, definicion_planta, foto=descargar)
+    procesar(partes, worker, respuesta(inicial, texto_respuesta, identificador="ACLARACION"))
+    borrador = partes.obtener(nota.id)
+    asociada, = borrador.contexto["fotos"]
+    assert borrador.estado == "borrador_pendiente" and borrador.version == 2
+    assert asociada["estado_asociacion"] == "fila"
+    assert (asociada["tag"], asociada["variable"]) == (tag, variable)
+    for clave in ("id", "sha256", "ruta", "ts", "mime", "bytes", "estado_descarga", "evidencia"):
+        assert asociada[clave] == anterior[clave]
+    procesar(partes, worker, respuesta(inicial, texto_respuesta, identificador="TARDIA"))
+    assert resultado(partes, "TARDIA") == "desfasada" and partes.obtener(nota.id) == borrador
+    confirmacion = respuesta(borrador, "Confirmo", identificador="FINAL")
+    procesar(partes, worker, confirmacion)
+    assert not partes.guardar_respuesta(confirmacion)
+    assert partes.obtener(nota.id).estado == "confirmado"
+    captura = AlmacenMemoriaLocal(partes.ruta).siguiente().documento
+    assert [b["contexto"]["fotos"][0] for b in captura["borradores"]] == [anterior, asociada]
+    stream.assert_called_once()
+    assert stream.call_args.args == ("GET", f"http://sim:8100{FOTO}")
+
+
+@pytest.mark.parametrize(("objetivo", "equipo", "rutas", "estado", "motivo"), [
+    ("la dos", "la dos", [FOTO], "fila", None),
+    ("la dos", "la uno", [FOTO], "nota", "fila_pendiente"),
+    ("la bomba", "la dos", [FOTO], "nota", "sin_mencion_inequivoca"),
+    ("la dos o de la tres", "la dos", [FOTO], "nota", "mencion_ambigua"),
+    ("la dos", "la dos", [FOTO, "/media/fotos/otra.jpg"], "nota", "varias_referencias_sin_correspondencia"),
+])
+def test_aclaracion_de_equipo_respeta_el_objetivo_original(tmp_path, objetivo, equipo, rutas, estado, motivo):
+    texto = f"La bomba está en 112 de descarga. Saqué foto del manómetro de descarga de {objetivo}."
+    nota, _, _, partes, worker = iniciar(tmp_path, texto, rutas, None)
+    procesar(partes, worker, respuesta(partes.obtener(nota.id), f"Era {equipo}."))
+    parte = partes.obtener(nota.id)
+    assert parte.estado == "borrador_pendiente"
+    assert all((f["estado_asociacion"], f["motivo"]) == (estado, motivo) for f in parte.contexto["fotos"])
+
+
+def test_presupuesto_sin_paso_opcional_publica_borrador_y_conserva_objetivo(tmp_path, caplog):
+    descargar = MagicMock(return_value=("image/jpeg", JPEG))
+    nota, _, _, partes, worker = iniciar(tmp_path, NOTA_UNIDAD, [FOTO], descargar,
+                                        presupuesto=PresupuestoEjecucion(pasos=17))
+    inicial = partes.obtener(nota.id)
+    with caplog.at_level("INFO", logger="sistema.execution_budget"):
+        procesar(partes, worker, respuesta(inicial, "psi"))
+    borrador = partes.obtener(nota.id)
+    assert borrador.estado == "borrador_pendiente"
+    assert borrador.filas[0].unidad == "psi"
+    assert borrador.contexto["fotos"] == inicial.contexto["fotos"]
+    assert partes.estado_ejecucion(nota.id).consumo.pasos == 17
+    assert "reconsiderar_asociacion_foto" not in caplog.text
+    descargar.assert_called_once()
+
+
+def test_limite_de_interacciones_conserva_foto_pendiente_si_descarta_filas_nuevas(tmp_path):
+    nota, _, _, partes, worker = iniciar(tmp_path, NOTA_UNIDAD, [FOTO], None)
+    inicial = partes.obtener(nota.id)
+    procesar(partes, worker, respuesta(inicial, "No sé", identificador="R1"))
+    procesar(partes, worker, respuesta(inicial, "Repetime", identificador="R2"))
+    procesar(partes, worker, respuesta(inicial, "psi", identificador="R3"))
+    final = partes.obtener(nota.id)
+    assert final.estado == "revision_manual" and final.filas == inicial.filas
+    assert final.contexto["fotos"] == inicial.contexto["fotos"]
+    assert resultado(partes, "R3") == "limite_interacciones"
