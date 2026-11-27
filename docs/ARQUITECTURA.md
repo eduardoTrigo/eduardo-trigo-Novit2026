@@ -76,11 +76,15 @@ Un operador exporta un paquete desde el SHA oficial y activa la ingesta con `pyt
 
 `buscar_manuales` reutiliza el catálogo de tools e inicia el recuperador PostgreSQL al recibir una consulta válida. El retriever lee un corpus identificado en una transacción de solo lectura y devuelve citas filtradas por sus metadatos. La evaluación de Novit se ejecuta por separado desde el checkout oficial. MCP conserva su allowlist de dos tools. [Contratos y ranking](SPEC_RAG_RETRIEVAL.md) · [Evaluación](EVALUACION_RAG.md)
 
+## Context Builder en el Issue #27
+
+El ensamblador recibe datos tipados ya obtenidos, selecciona fuentes y turnos por tarea, alcance y revisión, y coloca la nota original al final. Un resultado distingue instrucciones confiables, datos externos y decisiones de compactación. El módulo es independiente de los workers y admite un contador de tokens del futuro consumidor. [Contratos, autoridad y prueba Docker](SPEC_CONTEXT_BUILDER.md)
+
 ## Arquitectura propuesta para completar Entrega 1
 
 - **Parte de voz y tablet.** Agregar extracción validada a `FilaParte` a partir de la transcripción y de los datos de planta e historian. Descargar y asociar las fotos. Publicar el borrador en la tablet, procesar `planta/respuestas` y conservar la confirmación. Integrar este flujo sin demorar la alerta local.
 - **Estado de enlace y pendientes.** Derivar del estado efectivo del sistema los campos de enlace y pendientes del latido.
-- **RAG y armado de contexto.** Agregar embeddings autorizados al corpus, evaluar coseno y fusión híbrida, e incorporar citas al contexto junto con datos operativos de API o SQL.
+- **RAG e integración del contexto.** Agregar embeddings autorizados al corpus, evaluar coseno y fusión híbrida y conectar el contexto estructurado al futuro consumidor.
 
 El análisis completo de las causas de un escalado y la generación de órdenes de trabajo corresponden a entregas posteriores.
 

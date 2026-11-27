@@ -253,3 +253,7 @@ Los comandos `ingestar`, `stats` y `verificar` se ejecutan con el rol de aplicac
 ## Búsqueda en manuales
 
 `buscar_manuales` consulta la versión del corpus indicada por `PIA3_RAG_CORPUS_ID`. Devuelve texto, citas y metadatos de vigencia y aplicabilidad. Por defecto admite manuales vigentes y órdenes de archivo. Usa `consultar_equipos` para los límites operativos y `consultar_stock` para las cantidades de referencia. [Configuración, filtros y ejemplo](docs/SPEC_RAG_RETRIEVAL.md) · [Evaluación oficial de retrieval](docs/EVALUACION_RAG.md)
+
+## Context Builder
+
+`construir_contexto` recibe la nota y lecturas ya obtenidas. Ordena reglas, documentos, memoria y resultados de tools, conserva la autoridad y procedencia de los datos y aplica un presupuesto configurable. El componente es independiente del arranque del agente. [Contrato y ejemplo Docker de solo lectura](docs/SPEC_CONTEXT_BUILDER.md)
