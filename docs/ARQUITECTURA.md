@@ -64,11 +64,15 @@ SQLite registra una revisión pendiente en la misma transacción que cambia la n
 
 El registro valida los argumentos antes de llamar a los handlers y publica JSON Schema de entrada y salida. Cada consulta HTTP reutiliza `ClientePlanta` con un lector que restringe destino, ruta, tamaño, plazo y reintentos. Inventario, stock de referencia, materiales y tareas se leen del recurso oficial empaquetado. La ruta de consulta es independiente del arranque y de los consumidores actuales de `ClientePlanta`. [Mini spec y catálogo](SPEC_TOOLS_PLANTA.md)
 
+## Servidor MCP en el Issue #21
+
+El servidor stdio es un proceso que el cliente inicia por sesión. Publica `consultar_equipos` y `consultar_stock` con los esquemas exactos del registro y delega en el catálogo con dos trabajos simultáneos como máximo. Usa la misma imagen que el agente. El agente y PostgreSQL conservan su arranque independiente. [Mini spec MCP](SPEC_MCP.md)
+
 ## Arquitectura propuesta para completar Entrega 1
 
 - **Parte de voz y tablet.** Agregar extracción validada a `FilaParte` a partir de la transcripción y de los datos de planta e historian. Descargar y asociar las fotos. Publicar el borrador en la tablet, procesar `planta/respuestas` y conservar la confirmación. Integrar este flujo sin demorar la alerta local.
 - **Estado de enlace y pendientes.** Derivar del estado efectivo del sistema los campos de enlace y pendientes del latido.
-- **MCP y búsqueda en manuales.** Exponer al menos una tool de datos por MCP con su contrato de consulta. Incorporar la búsqueda en manuales con la recuperación documental.
+- **Búsqueda en manuales.** Incorporar la tool con la recuperación documental y su contrato de consulta.
 - **RAG y armado de contexto.** Indexar el corpus con metadatos y vigencia. Recuperar y citar secciones aplicables. El contexto combinará documentación con datos operativos de API o SQL para límites y stock.
 
 El análisis completo de las causas de un escalado y la generación de órdenes de trabajo corresponden a entregas posteriores.

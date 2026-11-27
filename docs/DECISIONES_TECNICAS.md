@@ -45,3 +45,9 @@ Este registro conserva el motivo y el estado de cada decisión. El seguimiento d
 - **Estado** · Adoptada para el Issue #19.
 - **Contexto y justificación** · El simulador publica equipos e históricos por HTTP. Para materiales y tareas se empaqueta una copia de referencia con commit y huellas de origen. Esto permite consultar durante un corte de enlace y conservar las diferencias por equipo de tareas que comparten código.
 - **Garantías y límites** · El registro explícito valida los argumentos antes de acceder a la fuente. El lector HTTP tiene destinos, tamaños, plazos y reintentos acotados. Una actualización de datos requiere regenerar el recurso desde el SHA oficial y comprobar la compatibilidad con el simulador desplegado. [Contratos y procedimiento](SPEC_TOOLS_PLANTA.md) · [Issue #19](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/issues/19)
+
+## DT-07 · Exponer dos consultas MCP por stdio
+
+- **Estado** · Adoptada para el Issue #21.
+- **Contexto y justificación** · `mcp==1.30.0`, de la línea estable mantenida, ofrece stdio y un servidor de bajo nivel compatible con Python 3.12, Pydantic y HTTPX existentes. El transporte permite usar el ciclo de vida de subproceso del cliente y reutilizar exactamente los esquemas del catálogo.
+- **Garantías y límites** · Se exponen dos consultas mediante una lista explícita y un límite de dos trabajos activos. El catálogo conserva la validación y sus presupuestos HTTP. El proceso tiene su propio ciclo de vida y puede ejecutarse en un contenedor por sesión con la imagen del agente. [Mini spec MCP](SPEC_MCP.md) · [Release del SDK](https://github.com/modelcontextprotocol/python-sdk/releases/tag/v1.30.0)

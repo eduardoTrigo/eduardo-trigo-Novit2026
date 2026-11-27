@@ -15,6 +15,7 @@ dependencies = [
     "httpx>=0.27,<1",
     "langchain>=1.0,<2",
     "psycopg[binary]>=3.2,<4",
+    "mcp==1.30.0",
 
     # Motor local STT y version compatible de PyAV
     "faster-whisper==1.2.1",

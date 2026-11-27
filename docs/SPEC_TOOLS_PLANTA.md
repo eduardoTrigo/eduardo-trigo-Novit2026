@@ -26,4 +26,4 @@ Cada llamada HTTP tiene 2 segundos de timeout por operación de red y un plazo t
 
 La definición y el catálogo corresponden al simulador `ab65b95e911731351dba395817a74a8cc60da2b2`. Ese SHA publica inventario, stock, materiales y tareas en `datos/materiales.yaml`. El JSON empaquetado conserva esos datos y las identidades y unidades de `datos/planta.yaml`. De `datos/documentos/historial/ordenes.json` solo se extraen los tags válidos para el filtro de órdenes, incluida la clave `PLANTA`. El recurso declara su versión de esquema, el SHA del commit y el SHA-256 de los tres archivos fuente. Las cantidades representan **stock de referencia**. [Contrato oficial](https://github.com/NovitSoftware/academia2026-tp/blob/ab65b95e911731351dba395817a74a8cc60da2b2/docs/contrato.md)
 
-Los flujos operativos conservan los contratos y ventanas de su cliente. Búsqueda en manuales, MCP e integración LangChain corresponden a incrementos posteriores.
+Los flujos operativos conservan los contratos y ventanas de su cliente. El Issue #21 expone equipos y stock mediante MCP. Búsqueda en manuales e integración LangChain corresponden a incrementos posteriores. [Servidor MCP](SPEC_MCP.md)
