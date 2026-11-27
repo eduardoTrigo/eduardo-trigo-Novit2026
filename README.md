@@ -243,3 +243,9 @@ YAML
 ```
 
 La suite habitual `python -m pytest -q` cubre el cliente con dobles y omite las pruebas que requieren una instancia real. El volumen del ejemplo conserva la fila vectorial después de detener el contenedor.
+
+## Ingesta documental de PIA-3
+
+El Issue #23 incorpora la ingesta manual del corpus oficial en el esquema `rag`. Exporta el paquete desde un commit oficial con `scripts/preparar_corpus_rag.py`. El contenedor consume el ZIP por entrada estándar y PostgreSQL conserva documentos, órdenes, metadatos de vigencia y un índice textual en español. Un volumen nuevo aplica `003-rag.sql` con Compose. Un volumen existente requiere aplicar esa migración explícitamente.
+
+Los comandos `ingestar`, `stats` y `verificar` se ejecutan con el rol de aplicación. La indexación semántica queda pendiente de una autorización oficial para un modelo de embeddings. [Procedimiento y pruebas de la ingesta](docs/SPEC_RAG_INDEXACION.md)

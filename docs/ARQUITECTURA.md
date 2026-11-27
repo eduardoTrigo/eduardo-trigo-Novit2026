@@ -54,7 +54,7 @@ El arranque estándar de Compose incluye PostgreSQL 16 con pgvector 0.8.7, en `p
 
 El rol de administración crea la extensión `vector` y un rol de aplicación con permiso de conexión a `pia3` y acceso a la extensión. La inicialización 001 se ejecuta en un volumen nuevo y admite reaplicación como administrador. El healthcheck comprueba autenticación por TCP y presencia de la extensión. El cliente psycopg lee la configuración cuando un consumidor abre una conexión. El agente carece de una dependencia de arranque con PostgreSQL y la base valida sus credenciales en su propio entrypoint. [Inicialización 001](../infra/postgres/001-vector.sql) · [Cliente psycopg](../src/sistema/postgres.py)
 
-SQLite sigue siendo la fuente de notas, partes, episodios, evidencia y outbox. PostgreSQL aloja la vista conversacional por nota en `memoria.partes`. El índice documental queda pendiente. [Decisión DT-03](DECISIONES_TECNICAS.md#dt-03--conservar-sqlite-e-integrar-postgresql-16-con-pgvector)
+SQLite sigue siendo la fuente de notas, partes, episodios, evidencia y outbox. PostgreSQL separa la vista conversacional por nota en `memoria.partes` de la ingesta documental en el esquema `rag`. [Decisión DT-03](DECISIONES_TECNICAS.md#dt-03--conservar-sqlite-e-integrar-postgresql-16-con-pgvector)
 
 ## Memoria conversacional en el Issue #17
 
@@ -68,12 +68,16 @@ El registro valida los argumentos antes de llamar a los handlers y publica JSON 
 
 El servidor stdio es un proceso que el cliente inicia por sesión. Publica `consultar_equipos` y `consultar_stock` con los esquemas exactos del registro y delega en el catálogo con dos trabajos simultáneos como máximo. Usa la misma imagen que el agente. El agente y PostgreSQL conservan su arranque independiente. [Mini spec MCP](SPEC_MCP.md)
 
+## Ingesta documental en el Issue #23
+
+Un operador exporta un paquete desde el SHA oficial y activa la ingesta con `python -m sistema.rag_ingest`. El proceso valida las fuentes, prepara un chunk por sección u orden, y publica una versión completa de forma atómica. PostgreSQL construye un índice textual en español y separa los vectores por corpus, identidad del modelo y ámbito de uso. La preparación de embeddings ocurre antes de abrir la transacción de escritura. El proceso es independiente del arranque del agente y queda a la espera de un proveedor autorizado para generar vectores operativos. [Mini spec RAG](SPEC_RAG_INDEXACION.md)
+
 ## Arquitectura propuesta para completar Entrega 1
 
 - **Parte de voz y tablet.** Agregar extracción validada a `FilaParte` a partir de la transcripción y de los datos de planta e historian. Descargar y asociar las fotos. Publicar el borrador en la tablet, procesar `planta/respuestas` y conservar la confirmación. Integrar este flujo sin demorar la alerta local.
 - **Estado de enlace y pendientes.** Derivar del estado efectivo del sistema los campos de enlace y pendientes del latido.
 - **Búsqueda en manuales.** Incorporar la tool con la recuperación documental y su contrato de consulta.
-- **RAG y armado de contexto.** Indexar el corpus con metadatos y vigencia. Recuperar y citar secciones aplicables. El contexto combinará documentación con datos operativos de API o SQL para límites y stock.
+- **RAG y armado de contexto.** Agregar embeddings autorizados al corpus documentado, recuperar y citar secciones aplicables y evaluar la recuperación. El contexto combinará documentación con datos operativos de API o SQL para límites y stock.
 
 El análisis completo de las causas de un escalado y la generación de órdenes de trabajo corresponden a entregas posteriores.
 

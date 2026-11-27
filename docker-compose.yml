@@ -93,6 +93,7 @@ services:
       - pia3_postgres:/var/lib/postgresql/data
       - ./infra/postgres/001-vector.sql:/docker-entrypoint-initdb.d/001-vector.sql:ro
       - ./infra/postgres/002-memoria.sql:/docker-entrypoint-initdb.d/002-memoria.sql:ro
+      - ./infra/postgres/003-rag.sql:/docker-entrypoint-initdb.d/003-rag.sql:ro
     healthcheck:
       test:
         - CMD-SHELL
