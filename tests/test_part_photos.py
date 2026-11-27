@@ -160,13 +160,79 @@ def test_sin_pasos_para_foto_conserva_borrador_y_presupuesto_de_cierre(tmp_path)
     descargar.assert_not_called()
 
 
-def test_foto_cerca_de_equipo_no_demuestra_que_el_equipo_sea_el_objetivo(tmp_path):
-    texto = "La dos gotea por la empaquetadura. Saqué foto de un goteo cerca de donde está la dos."
-    nota, _, _, partes, _ = iniciar(tmp_path, texto, [FOTO], None)
+@pytest.mark.parametrize("lugar", [
+    "cerca de donde está la dos", "cerca de la dos", "al lado de la dos", "junto a la dos",
+    "detrás de la dos", "delante de B-102", "frente a la dos", "debajo de la dos",
+    "alrededor de la dos", "próximo a la dos", "en las inmediaciones de la dos",
+    "cerca del motor de la dos", "cerca de la dos y de la tres",
+])
+def test_foto_cerca_de_equipo_no_demuestra_que_el_equipo_sea_el_objetivo(tmp_path, lugar):
+    texto = f"La dos gotea por la empaquetadura. Saqué foto de un goteo {lugar}."
+    descarga = MagicMock(return_value=("image/jpeg", JPEG))
+    nota, _, _, partes, worker = iniciar(tmp_path, texto, [FOTO], descarga)
     parte = partes.obtener(nota.id)
     assert parte.estado == "borrador_pendiente"
+    fila, = parte.filas
+    assert (fila.tag, fila.variable) == ("B-102", "goteo_empaquetadura")
     evidencia, = parte.contexto["fotos"]
     assert evidencia["estado_asociacion"] == "nota" and evidencia["tag"] is None
+    assert evidencia["objetivo_pendiente"] is None
+    assert evidencia["estado_descarga"] == "descargada"
+    procesar(partes, worker, respuesta(parte, "Confirmo"))
+    _, _, _, reabierto, _ = preparar(tmp_path)
+    final = reabierto.obtener(nota.id)
+    assert final.estado == "confirmado" and final.filas == parte.filas
+    assert final.contexto["fotos"] == [evidencia]
+    assert reabierto.obtener_foto(evidencia["sha256"]) == ("image/jpeg", JPEG)
+    descarga.assert_called_once()
+
+
+@pytest.mark.parametrize(("referencia", "tag"), [
+    ("del goteo de la dos", "B-102"),
+    ("del goteo de B-102", "B-102"),
+    ("del goteo de la dos al lado de la tres", "B-102"),
+    ("del goteo de B-102, frente a B-103", "B-102"),
+    ("del goteo de la dos cerca del motor de la tres", "B-102"),
+    ("del goteo de la dos cerca de la tres y de la uno", "B-102"),
+    ("del goteo de la dos cerca de la tres o de la uno", "B-102"),
+    ("del goteo de la dos cerca de la tres y del goteo de la uno", None),
+    ("del goteo de la dos cerca de la tres con otro goteo de la uno", None),
+    ("del goteo de la dos y de la tres", None),
+    ("de un goteo cerca de la tres, del motor de la dos", None),
+])
+def test_asociacion_distingue_objetivo_directo_de_referencias_espaciales(tmp_path, referencia, tag):
+    texto = f"La dos gotea por la empaquetadura. La tres gotea por la empaquetadura. Saqué foto {referencia}."
+    nota, _, _, partes, _ = iniciar(tmp_path, texto, [FOTO], None)
+    parte = partes.obtener(nota.id)
+    assert {f.tag for f in parte.filas} == {"B-102", "B-103"}
+    foto, = parte.contexto["fotos"]
+    assert foto["tag"] == tag
+    assert foto["estado_asociacion"] == ("fila" if tag else "nota")
+
+
+@pytest.mark.parametrize(("referencia", "asociable"), [
+    ("del manómetro de descarga cerca de la dos", False),
+    ("del manómetro de descarga de la dos junto a la tres", True),
+])
+def test_aclaracion_no_convierte_lugar_en_objetivo_fotografico(tmp_path, referencia, asociable):
+    texto = f"La dos 1640 pc de descarga. Saqué foto {referencia}."
+    descarga = MagicMock(return_value=("image/jpeg", JPEG))
+    nota, _, _, partes, worker = iniciar(tmp_path, texto, [FOTO], descarga)
+    inicial = partes.obtener(nota.id)
+    assert inicial.estado == "aclaracion_pendiente"
+    foto, = inicial.contexto["fotos"]
+    assert foto["estado_asociacion"] == "nota"
+    assert foto["objetivo_pendiente"] == ({"tag": "B-102", "variable": "presion_descarga_local"} if asociable else None)
+    procesar(partes, worker, respuesta(inicial, "psi", identificador="ACLARA"))
+    borrador = partes.obtener(nota.id)
+    assert borrador.estado == "borrador_pendiente" and borrador.filas[0].unidad == "psi"
+    resuelta, = borrador.contexto["fotos"]
+    assert resuelta["tag"] == ("B-102" if asociable else None)
+    assert resuelta["estado_asociacion"] == ("fila" if asociable else "nota")
+    assert resuelta["objetivo_pendiente"] is None
+    for campo in ("id", "sha256", "ruta", "ts", "mime", "bytes", "estado_descarga", "evidencia"):
+        assert resuelta[campo] == foto[campo]
+    descarga.assert_called_once()
 
 
 def test_metadata_conserva_timestamp_original_aun_si_no_incluye_offset():

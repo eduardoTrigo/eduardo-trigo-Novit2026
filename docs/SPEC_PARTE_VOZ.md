@@ -61,6 +61,8 @@ Cada referencia registra un identificador derivado de la nota y la ruta, timesta
 
 Una referencia ambigua o varias rutas sin correspondencia individual quedan en la nota. Una corrección de valor conserva el vínculo y un cambio de identidad lo invalida. Una asociación invalidada conserva ese estado aunque el TAG original vuelva a aparecer. Las versiones anteriores conservan su contexto. Si falta presupuesto para reconsiderar la foto, el objetivo sigue pendiente. Los registros anteriores que carecen del objetivo opcional siguen siendo legibles y conservan su estado.
 
+Los complementos de lugar se excluyen al identificar el objetivo fotográfico. «Foto de un goteo cerca de la dos» queda en la nota y carece de objetivo pendiente. «Foto del goteo de la dos junto a la tres» permite vincular la fila de B-102 porque el vínculo directo está explícito. Cuando la frase deja incierto qué equipos son objetivos y cuáles describen la ubicación, la foto queda en la nota.
+
 El descargador comparte las validaciones de B1. Para partes admite las rutas relativas `/media/fotos/…` del simulador local, con prefijo y terminador JPEG o PNG y verificación de longitud cuando está declarada. El worker admite tres descargas por nota, 512 KiB por archivo y 750 ms por intento. Usa un carril aislado y omite la descarga cuando falta presupuesto. Un 404, un timeout o un formato inválido conserva la ruta y deja que el parte continúe.
 
 ## Estados, persistencia y recuperación

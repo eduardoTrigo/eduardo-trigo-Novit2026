@@ -78,3 +78,13 @@ En PostgreSQL 16 aislado, las siete integraciones aprobaron. La proyección guar
 La suite completa con `PIA3_RAG_CORPUS` terminó con 628 pruebas aprobadas y 20 omitidas. La integración nueva se ejecutó en la pasada separada de PostgreSQL. También pasaron `docker compose config --quiet` y `git diff --check`.
 
 La ejecución del evaluador existente sobre las mismas 13 notas, tanto con STT archivado como con referencia, dio la misma salida para `2b5ca1b` y para la corrección. Con STT se mantuvieron 11/13 borradores, 23/24 en TAG y variable, 20/22 en valor, 21/22 en unidad y 9 confirmaciones virtuales. La prueba de regresión y la evaluación dirigida usan casos y métricas propios de este incremento. Los informes históricos conservan sus resultados oficiales.
+
+### Referencias espaciales
+
+Sobre `a9343d7`, las regresiones iniciales reprodujeron 12 fallos. El patrón interpretaba «de la dos» en «foto de un goteo cerca de la dos» como evidencia del equipo fotografiado. También tomaba un segundo equipo mencionado solo como ubicación como otro posible objetivo, lo que impedía vincular fotos con un objetivo directo. [Observación del PR #32](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/pull/32#discussion_r4719976778)
+
+El análisis excluye los complementos espaciales antes de identificar equipo y variable. «Foto de un goteo al lado de la dos» queda a nivel de nota, sin objetivo pendiente. «Foto del goteo de la dos al lado de la tres» conserva el objetivo B-102. Si una coordinación deja incierto el alcance del complemento, la foto queda a nivel de nota. Las pruebas cubren TAG, alias, aclaración de unidad, confirmación y recuperación con el mismo binario y SHA-256.
+
+La evaluación dirigida de las 13 notas dio salida idéntica antes y después con el STT archivado y con texto de referencia. Con STT se mantuvieron 11/13 borradores, 23/24 en TAG y variable, 20/22 en valor, 21/22 en unidad y 9 confirmaciones virtuales. Las asociaciones históricas ya persistidas quedan fuera del reprocesamiento.
+
+La suite con `PIA3_RAG_CORPUS` obtuvo 653 aprobadas y 22 omitidas. Las nueve integraciones aisladas de PostgreSQL incluyeron la proyección de la referencia espacial a nivel de nota tras la aclaración y confirmación. También pasaron `docker compose config --quiet` y `git diff --check`.

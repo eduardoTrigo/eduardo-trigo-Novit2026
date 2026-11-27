@@ -19,6 +19,11 @@ from sistema.part_extraction import indexar_aliases, normalizar_texto
 PLAZO_FOTO_S = 0.75
 MAX_BYTES_FOTOS_PARTE = 64 * 1024 * 1024
 _MENCION = re.compile(r"\bfoto\s+d(?:e|el)\b")
+_LUGAR = re.compile(
+    r"\b(?:(?:cerca|al\s+lado|detras|delante|debajo|encima|alrededor|enfrente|"
+    r"en\s+las\s+inmediaciones)\s+del?|(?:junto|frente|proxim[oa])\s+al?)\s+[^,]*"
+)
+_COORDINACION = re.compile(r"\b(?:y|e|o|u|ni)\b")
 _CUES = {
     "goteo_empaquetadura": r"\b(?:empaquetadura|goteo)\b",
     "presion_descarga_local": r"\b(?:manometro de descarga|presion de descarga)\b",
@@ -91,14 +96,25 @@ def _asociacion(texto, catalogo, filas):
     if len(menciones) > 1:
         return {"motivo": "mencion_ambigua"}
     frase, prefijo, objetivo = menciones[0]
-    if re.search(r"\b(?:foto|fotos|no|o|quizas|creo)\b", prefijo + " " + objetivo):
+    if re.search(r"\b(?:foto|fotos|no|quizas|creo)\b", prefijo + " " + objetivo):
         return {"motivo": "mencion_ambigua"}
     aliases = indexar_aliases(catalogo)
     if not aliases:
         return {}
     patrones = [re.escape(a) for a in sorted(aliases, key=len, reverse=True)]
     patron_aliases = "(" + "|".join(patrones) + r")(?![\w-])"
-    referencias = re.findall(r"(?<![\w-])" + patron_aliases, objetivo)
+    referencia = re.compile(r"(?<![\w-])" + patron_aliases)
+    # Un complemento de lugar puede incluir equipos y nombres de variables. Si su
+    # coordinación no enumera solo referencias de lugar, el alcance es incierto.
+    otro_lugar = re.compile(r"\s*(?:(?:de|del|a|al)\s+)?" + patron_aliases + r"\s*")
+    for lugar in _LUGAR.finditer(objetivo):
+        principal, *coordinados = _COORDINACION.split(lugar[0])
+        if len(referencia.findall(principal)) > 1 or any(not otro_lugar.fullmatch(tramo) for tramo in coordinados):
+            return {"motivo": "mencion_ambigua"}
+    objetivo = _LUGAR.sub(" ", objetivo)
+    if re.search(r"\bo\b", prefijo + " " + objetivo):
+        return {"motivo": "mencion_ambigua"}
+    referencias = referencia.findall(objetivo)
     objetivos = re.findall(r"(?:^\s*|\b(?:de|del)\s+)" + patron_aliases, objetivo)
     tags = {tag for alias in referencias for tag in aliases[alias]}
     variables = {variable for variable, patron in _CUES.items() if re.search(patron, objetivo)}
