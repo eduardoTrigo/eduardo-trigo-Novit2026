@@ -149,6 +149,15 @@ python scripts/actualizar_catalogo_planta.py ../academia2026-tp ab65b95e91173135
 
 Al actualizar el SHA, revisa el diff del recurso y repite las pruebas de contratos e integración. El stock es el de referencia publicado por Novit.
 
+## Servidor MCP por stdio
+
+El módulo `sistema.mcp_server` expone `consultar_equipos` y `consultar_stock` a un cliente MCP. Se ejecuta como un subproceso local o como un contenedor por sesión con la misma imagen del agente. El cliente conecta stdin y stdout al protocolo. [Configuración local y Docker, contratos y pruebas](docs/SPEC_MCP.md)
+
+```bash
+python -m sistema.mcp_server
+python -m pytest -q tests/test_mcp_integration.py
+```
+
 ## PostgreSQL 16 con pgvector
 
 El servicio `postgres` usa la imagen oficial de pgvector `0.8.7-pg16-bookworm`, fijada por digest. Escucha en `postgres:5432` dentro de `planta-lan` y guarda los datos en `pia3_postgres`. El agente y la base tienen límites de 2 CPU/2 GiB y 1 CPU/1 GiB respectivamente. El total de ambos servicios es 3 CPU y 3 GiB. [Imagen oficial de pgvector](https://github.com/pgvector/pgvector#docker) · [Compose](docker-compose.yml)
