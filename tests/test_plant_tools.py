@@ -126,7 +126,7 @@ def test_identificador_desconocido(tool_http, nombre, args):
 def test_catalogo_schema_campos_extra_y_destinos(tool_http):
     tools, requests, _ = tool_http
     catalogo = tools.catalogo()
-    assert len(catalogo) == 7
+    assert len(catalogo) == 8
     for entrada in catalogo:
         assert entrada["descripcion"] and entrada["entrada"]["additionalProperties"] is False
         assert entrada["salida"]["additionalProperties"] is False

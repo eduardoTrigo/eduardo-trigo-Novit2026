@@ -19,6 +19,7 @@ from sistema.plant_tool_models import (
     Estricto, HistorialSensores, ListaMateriales, Material, Muestra, Orden, Pagina, PaginaReferencia,
     ReferenciaPlanta, Sensor, Stock, Tarea,
 )
+from sistema.rag_retrieval import BuscadorDocumental, ConsultaManuales, RecuperadorPostgres, ResultadoManuales
 
 
 _ZONA_HISTORIAN = timezone(timedelta(hours=-3))
@@ -82,9 +83,13 @@ class _Tool(NamedTuple):
 
 
 class CatalogoToolsPlanta:
-    def __init__(self, destino: str = "http://sim:8100", *, transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(
+        self, destino: str = "http://sim:8100", *, transport: httpx.AsyncBaseTransport | None = None,
+        retriever: BuscadorDocumental | None = None,
+    ):
         self._destino = destino
         self._leer_http = LectorPlanta(destino, transport)
+        self._retriever = retriever
         self._tools = {
             "consultar_equipos": _Tool("Consulta equipos, aliases y sensores de planta.",
                                       ConsultaEquipos, Pagina[Equipo], self._equipos),
@@ -100,7 +105,16 @@ class CatalogoToolsPlanta:
                                                 ConsultaListaMateriales, ListaMateriales, self._materiales),
             "consultar_catalogo_tareas": _Tool("Consulta tareas estándar y no estándar y su aplicabilidad.",
                                               ConsultaTareas, PaginaReferencia[Tarea], self._tareas),
+            "buscar_manuales": _Tool(
+                "Busca citas en documentos y órdenes de archivo. Para límites operativos o cantidades de stock "
+                "consulta las fuentes de datos de planta.",
+                ConsultaManuales, ResultadoManuales, self._manuales,
+            ),
         }
+
+    def _manuales(self, consulta: ConsultaManuales) -> ResultadoManuales:
+        buscador = self._retriever if self._retriever is not None else RecuperadorPostgres.desde_entorno()
+        return buscador.buscar(consulta)
 
     @cached_property
     def _referencia(self) -> ReferenciaPlanta:
