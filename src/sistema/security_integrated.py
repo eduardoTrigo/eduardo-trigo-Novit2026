@@ -117,6 +117,7 @@ def main():
     worker_partes = WorkerPartes(
         partes, planta_partes.catalogo, historial=planta_partes.historial, fuentes_con_timeout=True,
         transcribir_respuesta=motor.transcribir_respuesta, hay_seguridad=almacen.hay_seguridad_lista,
+        foto=planta_partes.foto_parte,
     )
     worker_b1 = WorkerClasificacionB1(
         AlmacenClasificacionB1(almacen.ruta), partial(planta.catalogo, requerir_sensores=True),

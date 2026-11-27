@@ -5,9 +5,11 @@ import re
 from planta_contrato import FilaParte, MensajeTablet, NotaRecorrida
 
 from sistema.part_extraction import (
+    duda_por_conflicto,
     indexar_aliases,
     interpretar_medicion,
     lectura_del_equipo,
+    lecturas_equivalentes,
     normalizar_texto,
     normalizar_unidad,
     unidad_de_variable,
@@ -64,6 +66,10 @@ def preguntar(
                 f' Confirmá solo si fueron {alternativas[0]} {duda["unidad"]}.'
                 f" Si fueron {alternativas[1]}, indicá el valor correcto."
             )
+    elif tipo == "conflicto":
+        opciones = [f'{_numero(f["valor"])} {f["unidad"]}' for f in duda["alternativas"]]
+        texto = f'¿Cuál fue la lectura de {_VARIABLES[duda["variable"]]} de {duda["tag"]}: '
+        texto += " o ".join(opciones) + "?"
     else:
         fila = FilaParte.model_validate(duda["fila"])
         valor = _numero(fila.valor)
@@ -147,6 +153,14 @@ def resolver(duda: dict, texto: str, catalogo: dict, filas: list[FilaParte]):
         unidad = normalizar_unidad(re.sub(r"^en\s+", "", texto))
         if unidad is not None and unidad_de_variable(duda["variable"], unidad):
             fila = _fila(duda | {"unidad": unidad})
+    elif tipo == "conflicto":
+        medida = interpretar_medicion(texto, duda["variable"], valor_explicito=True)
+        if medida is not None:
+            valor, unidad = medida
+            coincidencias = [f for f in duda["alternativas"]
+                             if f["valor"] == valor and unidad in {None, f["unidad"]}]
+            if len(coincidencias) == 1:
+                fila = FilaParte.model_validate(coincidencias[0])
     elif tipo == "valor":
         decision, _ = interpretar_respuesta(texto, [], lambda: catalogo)
         if decision == "confirmada" and duda.get("confirmar_candidato"):
@@ -167,6 +181,11 @@ def resolver(duda: dict, texto: str, catalogo: dict, filas: list[FilaParte]):
         return "resuelta", filas, siguiente
     if fila is None:
         return "insuficiente", filas, None
-    if any((f.tag, f.variable) == (fila.tag, fila.variable) and f != fila for f in filas):
+    anterior = next((f for f in filas if (f.tag, f.variable) == (fila.tag, fila.variable)), None)
+    if anterior is not None:
+        if lecturas_equivalentes(anterior, fila):
+            return "resuelta", filas, None
+        if anterior.valor is not None and fila.valor is not None:
+            return "resuelta", [f for f in filas if f != anterior], duda_por_conflicto([anterior, fila])
         return "conflicto_lecturas", filas, None
-    return "resuelta", filas if fila in filas else [*filas, fila], None
+    return "resuelta", [*filas, fila], None

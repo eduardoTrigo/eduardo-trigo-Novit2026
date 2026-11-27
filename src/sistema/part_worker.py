@@ -22,7 +22,7 @@ class WorkerPartes:
         transcribir_respuesta: Callable[[bytes], str | None] | None = None,
         hay_seguridad: Callable[[], bool] = lambda: False,
         presupuesto: PresupuestoEjecucion | None = None, reloj: Callable[[], float] = time.monotonic,
-        fuentes_con_timeout: bool = False, modelo=None,
+        fuentes_con_timeout: bool = False, modelo=None, foto: Callable | None = None,
     ):
         self.almacen = almacen
         self.catalogo = catalogo
@@ -33,6 +33,7 @@ class WorkerPartes:
         self.reloj = reloj
         self._fuentes_con_timeout = fuentes_con_timeout
         self._modelo = modelo
+        self._foto = foto
         self._agente = None
         self.detencion = threading.Event()
         self.hilo: threading.Thread | None = None
@@ -44,7 +45,8 @@ class WorkerPartes:
 
             historial = (lambda *args, **kw: self.historial(*args, **kw)) if self.historial is not None else None
             self._agente = AgentePartes(lambda **kw: self.catalogo(**kw), historial,
-                                       fuentes_con_timeout=self._fuentes_con_timeout, modelo=self._modelo)
+                                       fuentes_con_timeout=self._fuentes_con_timeout, modelo=self._modelo,
+                                       foto=self._foto)
         return self._agente
 
     def procesar_siguiente(self) -> bool:
@@ -89,7 +91,7 @@ class WorkerPartes:
             control.iniciar_cierre(estado)
             if respuesta is None:
                 aplicado = self.almacen.guardar(nota, plan.estado, plan.filas, plan.mensaje,
-                                                plan.contexto, ejecucion=control)
+                                                plan.contexto, ejecucion=control, archivos_fotos=plan.archivos_fotos)
             else:
                 aplicado = self.almacen.aplicar_respuesta(
                     respuesta, plan.resultado, plan.mensaje, nuevo_estado=plan.estado, filas=plan.filas,

@@ -62,9 +62,10 @@ class AisladorLecturas:
     def __init__(self):
         self._cupo = threading.Lock()
 
-    def invocar(self, operacion, control):
+    def invocar(self, operacion, control, plazo_local=None):
         if not self._cupo.acquire(blocking=False):
             raise CorteEjecucion("fuente_no_disponible")
+        vence = control.reloj() + plazo_local if plazo_local is not None else None
         final = threading.Event()
         resultado = []
 
@@ -84,8 +85,15 @@ class AisladorLecturas:
             raise
         while True:
             control.verificar(tiempo=control.presupuesto.reserva_cierre_s)
-            if final.wait(min(0.025, control.plazo_lectura())):
+            espera = min(0.025, control.plazo_lectura())
+            if vence is not None:
+                espera = min(espera, vence - control.reloj())
+                if espera <= 0:
+                    raise TimeoutError("Plazo local agotado")
+            if final.wait(espera):
                 control.verificar(tiempo=control.presupuesto.reserva_cierre_s)
+                if vence is not None and control.reloj() >= vence:
+                    raise TimeoutError("Plazo local agotado")
                 exito, valor = resultado[0]
                 if not exito:
                     raise valor
@@ -129,7 +137,8 @@ class ControlEjecucion:
         transcurrido = math.ceil(max(0, self.reloj() - self.inicio) * 1000)
         self.consumo.activo_ms = self._activo_previo + transcurrido
 
-    def paso(self, nombre, operacion, *, aislador=None, antes=None, herramienta=None, argumentos=None):
+    def paso(self, nombre, operacion, *, aislador=None, antes=None, herramienta=None, argumentos=None,
+             plazo_local=None):
         self.verificar(tiempo=self.presupuesto.reserva_cierre_s)
         if self.consumo.pasos >= self.presupuesto.pasos - 1:
             raise CorteEjecucion("pasos_agotados")
@@ -139,7 +148,7 @@ class ControlEjecucion:
         try:
             if antes is not None:
                 antes()
-            valor = operacion() if aislador is None else aislador.invocar(operacion, self)
+            valor = operacion() if aislador is None else aislador.invocar(operacion, self, plazo_local)
             self.verificar()
             return valor
         except CorteEjecucion as error:

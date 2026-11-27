@@ -15,6 +15,7 @@ from sistema.note_store import AlmacenNotas
 from sistema.part_classification_store import crear_tablas_b1, registrar_confirmacion_b1
 from sistema.part_extraction import normalizar_texto
 from sistema.part_memory_store import crear_cola_memoria
+from sistema.part_photos import MAX_BYTES_FOTOS_PARTE, revalidar_fotos
 from sistema.security_outbox import OutboxSeguridad
 
 
@@ -59,6 +60,13 @@ class AlmacenPartes:
 
         with closing(sqlite3.connect(self.ruta)) as db, db:
             db.execute("BEGIN IMMEDIATE")
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS fotos_partes_blob (
+                    sha256 TEXT PRIMARY KEY,
+                    mime TEXT NOT NULL,
+                    contenido BLOB NOT NULL
+                )
+            """)
             db.execute("""
                 CREATE TABLE IF NOT EXISTS partes (
                     nota_id TEXT PRIMARY KEY REFERENCES notas(id),
@@ -266,6 +274,7 @@ class AlmacenPartes:
         contexto: dict | None = None,
         *,
         ejecucion=None,
+        archivos_fotos: dict[str, tuple[str, bytes]] | None = None,
     ) -> bool:
         filas_json = _FILAS.dump_json(filas).decode("utf-8")
         mensaje_id = mensaje.id if mensaje is not None else None
@@ -279,10 +288,38 @@ class AlmacenPartes:
             """, (estado, filas_json, mensaje_id, contexto_json, nota.id))
             if cursor.rowcount != 1:
                 return False
+            if archivos_fotos:
+                omitidas = self._guardar_fotos(db, archivos_fotos)
+                if omitidas:
+                    for foto in contexto["fotos"]:
+                        if foto["sha256"] in omitidas:
+                            foto.update(estado_descarga="omitida_limite", sha256=None, mime=None, bytes=None)
+                    contexto_json = json.dumps(contexto, ensure_ascii=False)
+                    db.execute("UPDATE partes SET contexto = ? WHERE nota_id = ?", (contexto_json, nota.id))
             if mensaje is not None:
                 self._encolar_borrador(db, nota.id, 1, filas_json, contexto_json, mensaje)
             self._cerrar_ejecucion(db, ejecucion, 0)
             return True
+
+    @staticmethod
+    def _guardar_fotos(db, archivos):
+        disponibles = MAX_BYTES_FOTOS_PARTE - db.execute(
+            "SELECT COALESCE(SUM(length(contenido)), 0) FROM fotos_partes_blob"
+        ).fetchone()[0]
+        omitidas = set()
+        for huella, (mime, contenido) in archivos.items():
+            if db.execute("SELECT 1 FROM fotos_partes_blob WHERE sha256 = ?", (huella,)).fetchone():
+                continue
+            if len(contenido) > disponibles:
+                omitidas.add(huella)
+                continue
+            db.execute("INSERT INTO fotos_partes_blob VALUES (?, ?, ?)", (huella, mime, contenido))
+            disponibles -= len(contenido)
+        return omitidas
+
+    def obtener_foto(self, sha256: str) -> tuple[str, bytes] | None:
+        with closing(sqlite3.connect(self.ruta)) as db:
+            return db.execute("SELECT mime, contenido FROM fotos_partes_blob WHERE sha256 = ?", (sha256,)).fetchone()
 
     def _encolar_borrador(
         self, db: sqlite3.Connection, nota_id: str, version: int, filas_json: str,
@@ -462,6 +499,9 @@ class AlmacenPartes:
                 else:
                     if filas is not None:
                         filas_json = _FILAS.dump_json(filas).decode("utf-8")
+                        datos = contexto if contexto is not None else json.loads(contexto_json)
+                        revalidar_fotos(datos, filas)
+                        contexto_json = json.dumps(datos, ensure_ascii=False)
                     if mensaje is not None:
                         version += 1
                         vigente = mensaje.id

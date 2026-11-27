@@ -56,6 +56,8 @@ El rol de administración crea la extensión `vector` y un rol de aplicación co
 
 SQLite sigue siendo la fuente de notas, partes, episodios, evidencia y outbox. PostgreSQL separa la vista conversacional por nota en `memoria.partes` de la ingesta documental en el esquema `rag`. [Decisión DT-03](DECISIONES_TECNICAS.md#dt-03--conservar-sqlite-e-integrar-postgresql-16-con-pgvector)
 
+El worker de partes descarga fotos después de preparar el mensaje de tablet. El contexto del parte y sus versiones conservan los metadatos que se proyectan en memoria. Los binarios se deduplican por SHA-256 en SQLite y se guardan junto al parte y su outbox. La descarga tiene su propio aislamiento dentro del presupuesto del turno. [Parte por voz](SPEC_PARTE_VOZ.md#fotografías)
+
 ## Memoria conversacional en el Issue #17
 
 SQLite registra una revisión pendiente en la misma transacción que cambia la nota, el parte o una respuesta. Un hilo independiente extrae una captura consistente, cierra la lectura SQLite y escribe en PostgreSQL. El reconocimiento local sigue al commit remoto y las revisiones menores o repetidas se descartan en PostgreSQL. La consulta por ID devuelve el documento remoto y el estado de sincronización respecto de SQLite. [Mini spec y política de memoria](SPEC_MEMORIA_CONVERSACIONAL.md)
@@ -86,7 +88,7 @@ El ensamblador recibe datos tipados ya obtenidos, selecciona fuentes y turnos po
 
 ## Arquitectura propuesta para completar Entrega 1
 
-- **Parte de voz y tablet.** Agregar extracción validada a `FilaParte` a partir de la transcripción y de los datos de planta e historian. Descargar y asociar las fotos. Publicar el borrador en la tablet, procesar `planta/respuestas` y conservar la confirmación. Integrar este flujo sin demorar la alerta local.
+- **Parte de voz y tablet.** Seguir la validación de extracción, aclaraciones, fotos y confirmación sobre el flujo integrado. La latencia integral con voz de campo queda pendiente. [Evaluación del Issue #31](EVALUACION_PARTE_ISSUE31.md)
 - **Estado de enlace y pendientes.** Derivar del estado efectivo del sistema los campos de enlace y pendientes del latido.
 - **RAG semántico.** Agregar embeddings autorizados al corpus y evaluar coseno y fusión híbrida. El contexto del parte ya usa las lecturas de su propio flujo.
 

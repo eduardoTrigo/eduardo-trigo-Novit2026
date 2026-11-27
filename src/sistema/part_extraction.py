@@ -31,16 +31,20 @@ for _valor, _palabra in enumerate(
 _PALABRAS = "|".join(sorted(
     _CORTOS.keys() | _DECENAS.keys() | _CENTENAS.keys() | {"mil"}, key=len, reverse=True
 ))
-_NUMERAL = rf"(?:[+-]?\d+(?:[.,]\d+)?|{_PALABRAS})\b"
+_NUMERAL = rf"(?:[+-]?\d+(?:[.,]\d+)*|{_PALABRAS})\b"
 _NUMEROS = re.compile(
     rf"(?<![\w-])(?:menos\s+)?{_NUMERAL}(?:\s+(?:(?:y|con|coma|punto)\s+)?{_NUMERAL})*"
     rf"(?:\s+y\s+medio\b)?"
 )
 _FRASES = re.compile(r"[!?;\n]+|(?<!\d)\.|\.(?!\d)")
+_SOLO_FOTO = re.compile(
+    r"\s*(?:le\s+)?(?:saque|tome|adjunte|dejo)\s+(?:una\s+)?fotos?\b"
+    r"(?:(?!\b(?:parad[ao]|disparad[ao]|gotea|pierde|vibra|suena|hace ruido)\b).)*"
+)
 _CLAUSULAS = re.compile(
     r"(?<!\bmenos)(?:(?<!\d),|,(?!\d))|\by\s+(?=(?:(?:el|la|las)\s+)?"
     r"(?:rodamiento|motor|temperatura|presion|descarga|diferencial|nivel|correas|"
-    r"gotea|pierde|sigue goteando|visor|hace|tiene)\b)"
+    r"gotea|pierde|sigue goteando|visor|hace|tiene|ruido|vibra|vibracion)\b)|(?<=\S)\s+(?=el (?:rodamiento|motor)\b)"
 )
 _INCERTIDUMBRE = re.compile(
     r"\b(?:no|mas o menos|aproximadamente|alrededor de|quizas|creo|entre)\b"
@@ -69,9 +73,11 @@ _CUANTITATIVAS = (
 _CUALITATIVAS = (
     ("estado_correas", r"\bcorreas\b"),
     ("nivel_aceite_visor", r"\b(?:visor de aceite|aceite en el visor)\b"),
-    ("estado", r"\b(?:parada|disparada|no arranca)\b"),
-    ("goteo_empaquetadura", r"\b(?:gotea|goteando|goteo|pierde|chorrea)\b.*\bempaquetadura\b"),
+    ("estado", r"\b(?:parad[ao]|disparad[ao]|no arranca)\b"),
+    ("goteo_empaquetadura", r"\b(?:gotea|goteando|goteo|pierde|chorrea)\b.*\bempaquetadura\b|"
+                            r"\bempaquetadura\b.*\b(?:gotea|goteando|goteo|pierde|chorrea)\b"),
     ("ruido", r"\b(?:golpeteo|ruido|suena)\b"),
+    ("vibracion", r"\b(?:vibracion|vibra|vibrando)\b"),
 )
 
 
@@ -81,6 +87,7 @@ class ResultadoExtraccion:
     pendiente: bool
     dudas: list[dict] = field(default_factory=list)
     no_interpretada: bool = False
+    segmentos_no_interpretados: list[dict] = field(default_factory=list)
 
 
 def normalizar_texto(texto: str) -> str:
@@ -121,9 +128,15 @@ def interpretar_numero(texto: str, decimal_implicito: bool = False) -> float | N
             return None
         valor = interpretar_numero(magnitud, decimal_implicito)
         return -valor if valor is not None else None
+    grupos = re.fullmatch(r"[+-]?\d{1,3}(?:(?:\.\d{3})+)(?:,\d+)?", texto)
+    grupos_ingles = re.fullmatch(r"[+-]?\d{1,3}(?:(?:,\d{3})+)(?:\.\d+)?", texto)
+    if grupos and ("," in texto or texto.count(".") > 1):
+        texto = texto.replace(".", "")
+    elif grupos_ingles and ("." in texto or texto.count(",") > 1):
+        texto = texto.replace(",", "")
+    elif re.fullmatch(r"[+-]?\d+[.,]\d{3}", texto):
+        return None  # Un único separador puede ser decimal o de miles.
     if re.fullmatch(r"[+-]?\d+(?:[.,]\d+)?", texto):
-        if re.search(r"[.,]\d{3}$", texto):
-            return None  # Separador decimal o de miles.
         valor = float(texto.replace(",", "."))
         return valor if math.isfinite(valor) else None
     tokens = texto.split()
@@ -141,9 +154,9 @@ def interpretar_numero(texto: str, decimal_implicito: bool = False) -> float | N
     if entero is not None:
         return float(entero)
     if decimal_implicito and len(tokens) == 2:
-        primero, segundo = (_CORTOS.get(t) for t in tokens)
+        primero, segundo = (_entero([t]) for t in tokens)
         if primero is not None and segundo is not None and 0 <= segundo < 10:
-            return primero + segundo / 10
+            return primero + (-segundo if tokens[0].startswith("-") else segundo) / 10
     return None
 
 
@@ -197,12 +210,12 @@ def _fila(clausula, equipo, sensores, candidatos=()):
         unidad = next(iter(explicitas))
     elif not explicitas:
         sufijo = clausula[numeros[0].end():].strip()
-        if sufijo and not re.match(r"(?:de|y)\b", sufijo):
-            return None, True
-        if variable == "presion_descarga_local":
-            unidad = equipo.get("manometro_local", {}).get("unidad")
-        else:
-            unidad = sensores.get((equipo["tag"], variable))
+        patron_variable = next(p for v, _, p, _ in _CUANTITATIVAS if v == variable)
+        if not sufijo or re.match(r"(?:de\b|y\s+medio\b)", sufijo) or re.match(patron_variable, sufijo):
+            if variable == "presion_descarga_local":
+                unidad = equipo.get("manometro_local", {}).get("unidad")
+            else:
+                unidad = sensores.get((equipo["tag"], variable))
     lectura = {
         "tag": equipo["tag"], "variable": variable, "valor": valor,
         "unidad": unidad if unidad in permitidas else None, "clausula": clausula,
@@ -245,6 +258,15 @@ def convertir_presion(valor: float, origen: str, destino: str) -> float | None:
     return None
 
 
+def lecturas_equivalentes(primera: FilaParte, segunda: FilaParte) -> bool:
+    if primera == segunda:
+        return True
+    if primera.valor is None or segunda.valor is None or primera.unidad == segunda.unidad:
+        return False
+    convertido = convertir_presion(segunda.valor, segunda.unidad, primera.unidad)
+    return convertido is not None and math.isclose(primera.valor, convertido, rel_tol=1e-6)
+
+
 def unidad_compatible(anterior: str | None, nueva: str) -> bool:
     return anterior == nueva or (anterior in _PRESIONES and nueva in _PRESIONES)
 
@@ -271,13 +293,15 @@ def extraer_parte(texto: str, catalogo: dict) -> ResultadoExtraccion:
     """Devuelve filas inequívocas y señala lecturas que requieren revisión."""
     alias = indexar_aliases(catalogo)
     patrones = [re.escape(a) for a in sorted(alias, key=len, reverse=True)]
-    patrones.extend([r"[a-z]{1,3}-\d{2,4}[a-z]?", "la bomba", "el filtro"])
+    genericos = {"la bomba": "bomba", "el filtro": "filtro", "bomba": "bomba", "filtro": "filtro"}
+    patrones.extend([r"[a-z]{1,3}-\d{2,4}[a-z]?", "la bomba", "el filtro",
+                     r"(?:bomba|filtro)(?=\s+(?:esta|estar|tiene|medio|me dio|gotea|vibra)\b)"])
     referencias = re.compile(r"(?<![\w-])(" + "|".join(patrones) + r")(?![\w-])")
     sensores = _sensores(catalogo)
     filas = {}
-    conflictos = set()
+    conflictos = {}
     dudas = []
-    no_interpretada = False
+    segmentos = []
     bombas_mencionadas = {}
     bomba_sin_identificar = False
 
@@ -285,18 +309,25 @@ def extraer_parte(texto: str, catalogo: dict) -> ResultadoExtraccion:
     # La coma de «parada, en reserva» pertenece a la misma observación de estado.
     texto = re.sub(r"\b(parad[ao]),\s*(en reserva)\b", r"\1 \2", texto)
     for frase in _FRASES.split(texto):
+        if _SOLO_FOTO.fullmatch(frase) and not any(
+            n.group() not in {"un", "una"} for n in _NUMEROS.finditer(referencias.sub("", frase))
+        ):
+            continue
         equipo = None
         candidatos = []
-        for indice, fragmento in enumerate(referencias.split(frase)):
+        fragmentos = referencias.split(frase)
+        for indice, fragmento in enumerate(fragmentos):
             if indice % 2:
-                equipos = alias.get(fragmento, {})
-                candidatos = list(equipos.values())
-                if not candidatos and fragmento in {"la bomba", "el filtro"}:
-                    candidatos = [e for e in catalogo["equipos"] if e["tipo"] == fragmento.split()[1]]
-                equipo = next(iter(equipos.values())) if len(equipos) == 1 else None
+                equipos = list(alias.get(fragmento, {}).values())
+                if not equipos and fragmento in genericos:
+                    equipos = [e for e in catalogo["equipos"] if e["tipo"] == genericos[fragmento]]
+                if indice > 1 and re.fullmatch(r"\s*(?:y|e|o|u|/)\s*", fragmentos[indice - 1]):
+                    equipos = list({e["tag"]: e for e in (*candidatos, *equipos)}.values())
+                candidatos = equipos
+                equipo = equipos[0] if len(equipos) == 1 and fragmento in alias else None
                 if equipo and equipo["tipo"] == "bomba":
                     bombas_mencionadas[equipo["tag"]] = equipo
-                elif fragmento == "la bomba" or fragmento.startswith("b-") or any(
+                elif genericos.get(fragmento) == "bomba" or fragmento.startswith("b-") or any(
                     candidato["tipo"] == "bomba" for candidato in candidatos
                 ):
                     bomba_sin_identificar = True
@@ -314,17 +345,28 @@ def extraer_parte(texto: str, catalogo: dict) -> ResultadoExtraccion:
                     if duda not in dudas:
                         dudas.append(duda)
                 elif duda:
-                    no_interpretada = True
+                    segmentos.append({"texto": clausula.strip(), "motivo": "lectura_no_resuelta"})
                 if fila is None:
                     continue
                 clave = (fila.tag, fila.variable)
-                if clave in conflictos:
-                    continue
-                if clave in filas and filas[clave] != fila:
-                    del filas[clave]
-                    conflictos.add(clave)
-                    no_interpretada = True
-                else:
+                if clave not in filas and clave not in conflictos:
                     filas[clave] = fila
+                    continue
+                anteriores = conflictos.get(clave) or [filas[clave]]
+                if not any(lecturas_equivalentes(anterior, fila) for anterior in anteriores):
+                    filas.pop(clave, None)
+                    conflictos[clave] = [*anteriores, fila]
 
-    return ResultadoExtraccion(list(filas.values()), bool(dudas or no_interpretada), dudas, no_interpretada)
+    for (tag, variable), alternativas in conflictos.items():
+        if all(f.valor is not None for f in alternativas):
+            dudas.append(duda_por_conflicto(alternativas))
+        else:
+            segmentos.extend({"texto": f.observacion or "", "motivo": "observaciones_en_conflicto",
+                              "tag": tag, "variable": variable} for f in alternativas)
+    return ResultadoExtraccion(list(filas.values()), bool(dudas or segmentos), dudas, bool(segmentos), segmentos)
+
+
+def duda_por_conflicto(alternativas: list[FilaParte]) -> dict:
+    fila = alternativas[0]
+    return {"tipo": "conflicto", "tag": fila.tag, "variable": fila.variable,
+            "alternativas": [f.model_dump() for f in alternativas]}

@@ -14,7 +14,9 @@ from planta_contrato import MensajeTablet, NotaRecorrida, RespuestaOperador
 
 from sistema.part_memory import RepositorioMemoriaPostgres, WorkerMemoria, consultar_memoria
 from sistema.part_memory_store import AlmacenMemoriaLocal
+from sistema.part_worker import WorkerPartes
 from sistema.postgres import ConfiguracionPostgres, ErrorConexionPostgres, conectar_postgres
+from test_part_extraction import definicion_planta
 from test_part_messages import preparar, transcribir_nota
 from test_part_workflow import procesar, respuesta
 from test_security_messages import crear_nota
@@ -27,9 +29,13 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_persiste_conversacion_real_del_worker_y_recupera_tras_fallos(tmp_path, monkeypatch):
-    notas, _, _, partes, worker = preparar(tmp_path)
-    nota = crear_nota().model_copy(update={"id": f"NOTA-MEM-{uuid4().hex}"})
-    transcribir_nota(notas, nota, "La uno está en 110 kilos de descarga")
+    notas, _, _, partes, _ = preparar(tmp_path)
+    nota = crear_nota().model_copy(update={"id": f"NOTA-MEM-{uuid4().hex}",
+                                         "fotos": ["/media/fotos/memoria.jpg"]})
+    texto = "La uno está en 110 kilos de descarga. Saqué foto del manómetro de descarga de la uno."
+    transcribir_nota(notas, nota, texto)
+    binario = b"\xff\xd8\xffprueba\xff\xd9"
+    worker = WorkerPartes(partes, definicion_planta, foto=lambda ruta, *, plazo: ("image/jpeg", binario))
     assert worker.procesar_siguiente()
     local = AlmacenMemoriaLocal(partes.ruta)
     inicial = local.siguiente()
@@ -84,6 +90,11 @@ def test_persiste_conversacion_real_del_worker_y_recupera_tras_fallos(tmp_path, 
     assert [m.id for m in mensajes] == [cambio.mensaje_id, confirmacion.mensaje_id]
     assert [m.pantalla.filas[0].valor for m in mensajes] == [110, 115]
     assert [RespuestaOperador.model_validate(r["payload"]) for r in memoria["respuestas"]] == [cambio, confirmacion]
+    foto, = memoria["parte"]["contexto"]["fotos"]
+    assert foto["tag"] == "B-101" and foto["variable"] == "presion_descarga_local"
+    assert [b["contexto"]["fotos"] for b in memoria["borradores"]] == [[foto], [foto]]
+    assert partes.obtener_foto(foto["sha256"]) == ("image/jpeg", binario)
+    assert "contenido" not in foto
 
 
 def test_rol_de_aplicacion_solo_puede_leer_y_proyectar():
