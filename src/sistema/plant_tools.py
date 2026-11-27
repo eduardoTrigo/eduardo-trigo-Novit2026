@@ -50,7 +50,7 @@ def cargar_referencia() -> ReferenciaPlanta:
         raise ErrorTool("respuesta_invalida", "Catálogo oficial empaquetado inválido") from None
 
 
-def _pagina(items: list, limite: int) -> dict:
+def paginar_resultado(items: list, limite: int) -> dict:
     return {"items": items[:limite], "total": len(items), "truncado": len(items) > limite}
 
 
@@ -176,7 +176,7 @@ class CatalogoToolsPlanta:
             for e in equipos if (consulta.tag is None or e.tag == consulta.tag)
             and (consulta.tipo is None or e.tipo == consulta.tipo)
         ]
-        return Pagina[Equipo](**_pagina(items, consulta.limite))
+        return Pagina[Equipo](**paginar_resultado(items, consulta.limite))
 
     def _historial(self, consulta: ConsultaHistorialSensores) -> HistorialSensores:
         self._validar_equipo(consulta.tag)
@@ -201,7 +201,7 @@ class CatalogoToolsPlanta:
             items.append(muestra)
         items.sort(key=lambda muestra: muestra.ts)
         return HistorialSensores(tag=consulta.tag, variable=consulta.variable, unidad=unidad, desde=desde, hasta=hasta,
-                                **_pagina(items, consulta.limite))
+                                **paginar_resultado(items, consulta.limite))
 
     def _ordenes(self, consulta: ConsultaHistorialOrdenes) -> Pagina[Orden]:
         if consulta.equipo is not None and consulta.equipo not in self._referencia.equipos_archivo_ordenes:
@@ -215,7 +215,7 @@ class CatalogoToolsPlanta:
                or (consulta.hasta is not None and o.fecha > consulta.hasta) for o in items):
             raise ValueError("Orden fuera de los filtros enviados")
         items.sort(key=lambda orden: orden.fecha, reverse=True)
-        return Pagina[Orden](**_pagina(items, consulta.limite))
+        return Pagina[Orden](**paginar_resultado(items, consulta.limite))
 
     def _procedencia(self) -> dict:
         return {"origen": "referencia", "sha": self._referencia.sha}
@@ -228,7 +228,7 @@ class CatalogoToolsPlanta:
 
     def _inventario(self, consulta: ConsultaInventario) -> PaginaReferencia[Material]:
         items = [self._repuesto(consulta.codigo)] if consulta.codigo else self._referencia.repuestos
-        return PaginaReferencia[Material](**_pagina(items, consulta.limite), **self._procedencia())
+        return PaginaReferencia[Material](**paginar_resultado(items, consulta.limite), **self._procedencia())
 
     def _stock(self, consulta: ConsultaStock) -> Stock:
         material = self._repuesto(consulta.codigo)
@@ -244,7 +244,7 @@ class CatalogoToolsPlanta:
         lista = self._referencia.lista_materiales.get(consulta.equipo)
         items = [self._repuesto(codigo) for codigo in lista or ()]
         return ListaMateriales(equipo=consulta.equipo, estado="definida" if lista is not None else "sin_lista",
-                              **_pagina(items, consulta.limite), **self._procedencia())
+                              **paginar_resultado(items, consulta.limite), **self._procedencia())
 
     def _tareas(self, consulta: ConsultaTareas) -> PaginaReferencia[Tarea]:
         if consulta.equipo is not None:
@@ -258,4 +258,4 @@ class CatalogoToolsPlanta:
             for tarea in tareas if (consulta.codigo is None or consulta.codigo == tarea.codigo)
             and (consulta.equipo is None or consulta.equipo in (tarea.equipos or ()))
         ]
-        return PaginaReferencia[Tarea](**_pagina(items, consulta.limite), **self._procedencia())
+        return PaginaReferencia[Tarea](**paginar_resultado(items, consulta.limite), **self._procedencia())

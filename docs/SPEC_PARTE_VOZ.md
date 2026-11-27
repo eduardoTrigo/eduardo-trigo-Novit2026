@@ -2,6 +2,8 @@
 
 Diseño propuesto para A1–A4b del [Issue #11](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/issues/11), sobre `11-feat-voice-parts` y `b0d7f35`. La entrega de esta etapa es la especificación para revisión. La [evaluación anterior](EVALUACION_ENTREGA1.md) observó 13 notas sin borrador, seguridad B2 10/10, F1 2/2, F2 1/1 y ambas eliminatorias superadas.
 
+El Issue #29 integra el runtime determinista de LangChain al worker del parte y mantiene la confirmación bajo control de SQLite. El presupuesto de 10 s activos comienza al seleccionar trabajo transcrito y se acumula entre turnos. Audio, STT y la espera del operador tienen sus propios ciclos. Las secciones históricas conservan el diseño del Issue #11. [Runtime, estados y verificación](SPEC_AGENT_RUNTIME.md)
+
 ## Requisitos y fuentes oficiales
 
 El Enunciado TP, sección de parte por voz, y el Anexo Entrega 1, págs. 2–4, exigen STT local autorizado, una fila por equipo y variable, hora de la nota, asociación de fotos, extracción estructurada, aclaraciones justificadas y confirmación del operador. El parte debe funcionar durante el corte del enlace externo. El Anexo también pide presupuesto de pasos y tokens, timeout global por nota y persistencia de la conversación en PostgreSQL. Este incremento usa la persistencia SQLite existente. PostgreSQL 16 sigue pendiente como requisito de Entrega 1. RAG y MCP quedan fuera de esta etapa. Ver [plan](PLAN.md), [arquitectura](ARQUITECTURA.md) y [decisiones](DECISIONES_TECNICAS.md).

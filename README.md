@@ -257,3 +257,7 @@ Los comandos `ingestar`, `stats` y `verificar` se ejecutan con el rol de aplicac
 ## Context Builder
 
 `construir_contexto` recibe la nota y lecturas ya obtenidas. Ordena reglas, documentos, memoria y resultados de tools, conserva la autoridad y procedencia de los datos y aplica un presupuesto configurable. El componente es independiente del arranque del agente. [Contrato y ejemplo Docker de solo lectura](docs/SPEC_CONTEXT_BUILDER.md)
+
+## Runtime del parte
+
+`WorkerPartes` ejecuta una cadena determinista de LangChain desde la nota transcrita y en los turnos del operador. SQLite conserva el presupuesto por nota y registra el borrador y su publicación en la misma transacción. El plazo activo provisional es de 10 s y excluye la espera humana y los ciclos de audio y STT. [Contrato, cortes y verificación](docs/SPEC_AGENT_RUNTIME.md)

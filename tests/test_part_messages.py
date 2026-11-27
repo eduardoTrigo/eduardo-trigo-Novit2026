@@ -216,8 +216,8 @@ def test_entrypoint_conecta_worker_y_publicadores_sin_repetir_stt(tmp_path, monk
     whisper = MagicMock()
     monkeypatch.setattr(security_integrated, "WhisperLocal", lambda **opciones: whisper)
     monkeypatch.setattr(security_integrated.WorkerPersistente, "iniciar", lambda self: None)
-    monkeypatch.setattr(security_integrated.ClientePlanta, "catalogo", lambda self: definicion_planta())
-    monkeypatch.setattr(security_integrated.ClientePlanta, "historial", lambda *args: [], raising=False)
+    monkeypatch.setattr(security_integrated.ClientePlanta, "catalogo", lambda self, **kw: definicion_planta())
+    monkeypatch.setattr(security_integrated.ClientePlanta, "historial", lambda *args, **kw: [], raising=False)
     publicadores = MagicMock()
     monkeypatch.setattr(security_integrated, "WorkerOutbox", publicadores)
 

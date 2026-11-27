@@ -1,17 +1,15 @@
 """Deriva borradores y aplica respuestas de tablet fuera del hilo MQTT."""
 
 import logging
+import sqlite3
 import threading
+import time
 from collections.abc import Callable
 
-from planta_contrato import MensajeTablet, RespuestaOperador
+from planta_contrato import RespuestaOperador
 
 from sistema.audio_service import descargar_audio
-from sistema.part_clarification import preguntar, resolver
-from sistema.part_context import verificar_lectura
-from sistema.part_extraction import extraer_parte
-from sistema.part_messages import crear_borrador
-from sistema.part_reply import interpretar_respuesta
+from sistema.execution_budget import ControlEjecucion, CorteEjecucion, PresupuestoEjecucion
 from sistema.part_store import AlmacenPartes, ParteGuardado, TareaSTT
 from sistema.transcription_service import MAX_BYTES_RESPUESTA
 
@@ -23,74 +21,108 @@ class WorkerPartes:
         self, almacen: AlmacenPartes, catalogo: Callable[[], dict], *, historial: Callable | None = None,
         transcribir_respuesta: Callable[[bytes], str | None] | None = None,
         hay_seguridad: Callable[[], bool] = lambda: False,
+        presupuesto: PresupuestoEjecucion | None = None, reloj: Callable[[], float] = time.monotonic,
+        fuentes_con_timeout: bool = False, modelo=None,
     ):
         self.almacen = almacen
         self.catalogo = catalogo
         self.historial = historial
         self.transcribir_respuesta = transcribir_respuesta
         self.hay_seguridad = hay_seguridad
+        self.presupuesto = presupuesto or PresupuestoEjecucion()
+        self.reloj = reloj
+        self._fuentes_con_timeout = fuentes_con_timeout
+        self._modelo = modelo
+        self._agente = None
         self.detencion = threading.Event()
         self.hilo: threading.Thread | None = None
 
+    @property
+    def agente(self):
+        if self._agente is None:
+            from sistema.part_agent import AgentePartes
+
+            historial = (lambda *args, **kw: self.historial(*args, **kw)) if self.historial is not None else None
+            self._agente = AgentePartes(lambda **kw: self.catalogo(**kw), historial,
+                                       fuentes_con_timeout=self._fuentes_con_timeout, modelo=self._modelo)
+        return self._agente
+
     def procesar_siguiente(self) -> bool:
-        pendiente = self.almacen.siguiente_respuesta()
+        inicio = self.reloj()
+        pendiente = self.almacen.siguiente_respuesta(timeout=self.presupuesto.reserva_cierre_s)
         if pendiente is not None:
-            return self._procesar_respuesta(*pendiente)
+            return self._procesar_respuesta(*pendiente, inicio=inicio)
         if self.transcribir_respuesta is not None and not self.hay_seguridad():
             tarea_stt = self.almacen.reclamar_stt()
             if tarea_stt is not None:
                 return self._procesar_stt(tarea_stt, self.transcribir_respuesta)
 
-        tarea = self.almacen.siguiente()
+        inicio = self.reloj()
+        tarea = self.almacen.siguiente(timeout=self.presupuesto.reserva_cierre_s)
         if tarea is None:
             return False
 
         nota, texto = tarea
-        if not texto:
-            return self.almacen.guardar(nota, "revision_manual", [], None)
+        return self._ejecutar_turno(nota, texto or "", inicio=inicio)
 
-        catalogo = self.catalogo()
-        extraccion = extraer_parte(texto, catalogo)
-        filas = extraccion.filas
-        if nota.id.startswith("VIVO-"):
-            return self.almacen.guardar(nota, "revision_manual", filas, None)
-        contexto = {"pendientes": extraccion.dudas, "no_interpretada": extraccion.no_interpretada}
-        estado, mensaje = self._preparar_turno(nota, filas, contexto, catalogo, 1)
-        return self.almacen.guardar(nota, estado, filas, mensaje, contexto)
-
-    def _preparar_turno(self, nota, filas, contexto, catalogo, version) -> tuple[str, MensajeTablet | None]:
-        pendientes = contexto.setdefault("pendientes", [])
-        if not pendientes and not contexto.get("no_interpretada") and self.historial is not None:
-            evidencia = contexto.setdefault("evidencia", [])
-            confirmadas = [r["duda"]["fila"] for r in contexto.get("resoluciones", [])
-                           if r["resultado"] == "resuelta" and r.get("duda", {}).get("tipo") == "rango"]
-            for fila in filas:
-                if fila.valor is None:
-                    continue
-                datos = fila.model_dump()
-                comprobacion = next((e for e in evidencia if e["fila"] == datos), None)
-                if comprobacion is None:
-                    comprobacion = verificar_lectura(fila, nota.ts, catalogo, self.historial)
-                    evidencia.append(comprobacion)
-                fuera = any(comprobacion[f]["estado"] == "fuera_de_rango" for f in ("historico", "limites"))
-                if fuera and datos not in confirmadas:
-                    pendientes.append({"tipo": "rango", "fila": datos})
-        if pendientes:
-            equipos = {e["tag"]: e for e in catalogo["equipos"]}
-            duda = pendientes[0]
-            if duda["tipo"] == "valor" and duda["unidad"] is not None:
-                duda["confirmar_candidato"] = True
-            return "aclaracion_pendiente", preguntar(nota, duda, equipos, filas, version)
-        if contexto.get("no_interpretada"):
-            return "revision_manual", None
-        if not filas:
-            return "sin_contenido", None
-        if all(fila.valor is None for fila in filas):
-            return "revision_manual", None
-        return "borrador_pendiente", crear_borrador(nota, filas, version=version)
+    def _ejecutar_turno(self, nota, texto, *, inicio, parte=None, respuesta=None, fase=None):
+        reserva = self.almacen.reclamar_ejecucion(nota.id, respuesta.mensaje_id if respuesta else None,
+                                                self.presupuesto)
+        if reserva is None:
+            return False
+        identificador, previo, recuperacion = reserva
+        control = ControlEjecucion(nota.id, identificador, self.presupuesto, previo, inicio=inicio,
+                                   reloj=self.reloj, cancelada=self.detencion.is_set)
+        try:
+            if recuperacion == "interrumpida":
+                raise CorteEjecucion("ejecucion_interrumpida")
+            control.verificar(tiempo=self.presupuesto.reserva_cierre_s)
+            if recuperacion == "reversion" and not control.reintentar():
+                raise CorteEjecucion("reintentos_agotados")
+            plan = self.agente.nota(control, nota, texto) if respuesta is None else self.agente.respuesta(
+                control, parte, respuesta, fase,
+            )
+            estado = plan.estado or (parte.estado if parte else "revision_manual")
+            estado = "espera_operador" if estado in {"borrador_pendiente", "aclaracion_pendiente"} else estado
+            if plan.resultado == "requiere_stt":
+                estado = "espera_stt"
+            control.iniciar_cierre(estado)
+            if respuesta is None:
+                aplicado = self.almacen.guardar(nota, plan.estado, plan.filas, plan.mensaje,
+                                                plan.contexto, ejecucion=control)
+            else:
+                aplicado = self.almacen.aplicar_respuesta(
+                    respuesta, plan.resultado, plan.mensaje, nuevo_estado=plan.estado, filas=plan.filas,
+                    contexto=plan.contexto, fase=fase, ejecucion=control,
+                )
+        except sqlite3.IntegrityError:
+            self.almacen.registrar_reversion(control)
+            control.traza("cierre", "persistencia_revertida")
+            raise
+        except (CorteEjecucion, ImportError, ValueError, sqlite3.OperationalError) as error:
+            if isinstance(error, CorteEjecucion) and error.motivo == "reserva_perdida":
+                return False
+            if isinstance(error, CorteEjecucion):
+                motivo = error.motivo
+            elif isinstance(error, ImportError):
+                motivo = "runtime_no_disponible"
+            elif isinstance(error, sqlite3.OperationalError):
+                motivo = "timeout_global" if control.restante() <= 0 else "fuente_no_disponible"
+            else:
+                motivo = "salida_invalida"
+            control.iniciar_cierre("revision_manual", motivo)
+            if respuesta is None:
+                aplicado = self.almacen.guardar(nota, "revision_manual", [], None, ejecucion=control)
+            else:
+                aplicado = self.almacen.aplicar_respuesta(
+                    respuesta, "corte_ejecucion", nuevo_estado="revision_manual", fase=fase, ejecucion=control,
+                )
+        control.medir()
+        control.traza("cierre", "persistido" if aplicado else "sin_cambios")
+        return aplicado
 
     def _parte_vigente(self, respuesta: RespuestaOperador) -> ParteGuardado | None:
-        parte = self.almacen.buscar_por_mensaje(respuesta.mensaje_id)
+        parte = self.almacen.buscar_por_mensaje(respuesta.mensaje_id, timeout=self.presupuesto.reserva_cierre_s)
         if (parte is None or parte.mensaje_id != respuesta.mensaje_id
                 or parte.estado not in {"borrador_pendiente", "aclaracion_pendiente"}):
             return None
@@ -111,63 +143,11 @@ class WorkerPartes:
             return self.almacen.finalizar_stt(tarea, error=error)
         return self.almacen.finalizar_stt(tarea, texto=texto)
 
-    def _procesar_respuesta(self, respuesta: RespuestaOperador, fase: str | None) -> bool:
-        if fase == "stt_agotado":
-            return self.almacen.aplicar_respuesta(respuesta, "stt_fallido", fase=fase)
+    def _procesar_respuesta(self, respuesta: RespuestaOperador, fase: str | None, *, inicio) -> bool:
         parte = self._parte_vigente(respuesta)
-        if parte is None:
+        if parte is None or self.almacen.respuesta_ignorable(respuesta, fase, timeout=self.presupuesto.reserva_cierre_s):
             return self.almacen.aplicar_respuesta(respuesta, "insuficiente", fase=fase)
-        if parte.estado == "aclaracion_pendiente":
-            return self._resolver_duda(parte, respuesta, fase)
-
-        resultado, filas = interpretar_respuesta(respuesta.texto, parte.filas, self.catalogo)
-        if resultado == "insuficiente" and respuesta.audio_url and fase is None:
-            resultado = "requiere_stt"
-        if filas is None:
-            return self.almacen.aplicar_respuesta(respuesta, resultado, fase=fase)
-        catalogo = self.catalogo() if self.historial is not None else {}
-        contexto = parte.contexto
-        contexto.setdefault("resoluciones", []).append({
-            "respuesta_id": respuesta.id, "mensaje_id": respuesta.mensaje_id, "resultado": resultado,
-            "filas": [f.model_dump() for f in filas],
-        })
-        estado, mensaje = self._preparar_turno(parte.nota, filas, contexto, catalogo, parte.version + 1)
-        return self.almacen.aplicar_respuesta(
-            respuesta, resultado, mensaje, nuevo_estado=estado, filas=filas, contexto=contexto, fase=fase,
-        )
-
-    def _resolver_duda(self, parte: ParteGuardado, respuesta: RespuestaOperador, fase: str | None) -> bool:
-        resultado, _ = interpretar_respuesta(respuesta.texto, [], self.catalogo)
-        if resultado == "rechazada":
-            return self.almacen.aplicar_respuesta(respuesta, resultado, fase=fase)
-        contexto = parte.contexto
-        pendientes = contexto["pendientes"]
-        duda = pendientes[0]
-        catalogo = self.catalogo()
-        resultado, filas, siguiente = resolver(duda, respuesta.texto, catalogo, parte.filas)
-        if resultado == "insuficiente":
-            if respuesta.audio_url and fase is None:
-                resultado = "requiere_stt"
-            return self.almacen.aplicar_respuesta(respuesta, resultado, fase=fase)
-
-        contexto.setdefault("resoluciones", []).append({
-            "duda": duda, "respuesta_id": respuesta.id, "mensaje_id": respuesta.mensaje_id,
-            "resultado": resultado, "filas": [f.model_dump() for f in filas],
-        })
-        if resultado == "conflicto_lecturas":
-            return self.almacen.aplicar_respuesta(
-                respuesta, resultado, nuevo_estado="revision_manual", contexto=contexto, fase=fase,
-            )
-        pendientes.pop(0)
-        if siguiente is not None:
-            pendientes.insert(0, siguiente)
-        if duda["tipo"] == "rango":
-            claves = [f.model_dump() for f in filas]
-            pendientes[:] = [p for p in pendientes if p["tipo"] != "rango" or p["fila"] in claves]
-        estado, mensaje = self._preparar_turno(parte.nota, filas, contexto, catalogo, parte.version + 1)
-        return self.almacen.aplicar_respuesta(
-            respuesta, resultado, mensaje, nuevo_estado=estado, filas=filas, contexto=contexto, fase=fase,
-        )
+        return self._ejecutar_turno(parte.nota, respuesta.texto, inicio=inicio, parte=parte, respuesta=respuesta, fase=fase)
 
     def iniciar(self) -> None:
         if self.hilo is not None:
