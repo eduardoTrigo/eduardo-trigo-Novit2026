@@ -39,6 +39,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-pia3_app}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       POSTGRES_CONNECT_TIMEOUT: ${POSTGRES_CONNECT_TIMEOUT:-5}
+      PIA3_RAG_CORPUS_ID: ${PIA3_RAG_CORPUS_ID:-}
 
       # Publicacion de alertas desactivada
       # durante las pruebas iniciales

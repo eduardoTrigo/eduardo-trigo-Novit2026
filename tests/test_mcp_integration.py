@@ -43,6 +43,9 @@ async def test_stdio_real_negocia_descubre_consulta_y_maneja_errores(caplog):
         with pytest.raises(McpError) as error:
             await cliente.call_tool("consultar_inventario", {})
         assert error.value.error.code == types.INVALID_PARAMS
+        with pytest.raises(McpError) as error:
+            await cliente.call_tool("buscar_manuales", {"consulta": "aceite"})
+        assert error.value.error.code == types.INVALID_PARAMS
         fallo = await cliente.call_tool("consultar_stock", {})
         assert fallo.isError and fallo.structuredContent is None
     assert not [r for r in caplog.records if r.name.startswith("mcp.client.stdio") and r.levelno >= 30]

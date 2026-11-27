@@ -57,3 +57,9 @@ Este registro conserva el motivo y el estado de cada decisión. El seguimiento d
 - **Estado** · Ingesta documental y almacenamiento vectorial de prueba implementados en el Issue #23.
 - **Contexto y justificación** · El índice oficial ya delimita secciones, páginas y citas. La ingesta conserva esas unidades y separa órdenes históricas. Un paquete local verificable se exporta desde Git y llega al contenedor por entrada estándar, preservando el corpus en su repositorio de origen.
 - **Garantías y límites** · Una versión se publica por transacción. La identidad incluye las huellas de origen y la versión de preparación. Los vectores se separan por modelo, revisión, dimensiones, configuración y ámbito. Se adopta GIN para texto en español y distancia vectorial exacta para las pruebas. La incorporación de HNSW se evaluará con un modelo autorizado y una medición. [Mini spec RAG](SPEC_RAG_INDEXACION.md) · [Issue #23](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/issues/23)
+
+## DT-09 · Recuperar citas con PostgreSQL FTS y comparar con BM25 oficial
+
+- **Estado** · Recuperación textual, evaluación oficial y `buscar_manuales` implementados en el Issue #25.
+- **Contexto y justificación** · El corpus versionado ya publica lexemas en español, vigencia y alcance. Sobre ese índice se usan cobertura de lexemas, títulos, códigos exactos y filtros aplicados antes del ranking final. La consulta documental opera con la identidad explícita del corpus y el rol de aplicación.
+- **Evidencia y pendientes** · Se evaluaron BM25, FTS base y FTS operativo sobre las 71 preguntas de Novit. El ejemplo académico de embeddings requiere confirmación de autorización para el TP antes de habilitar recuperación semántica. [Contratos](SPEC_RAG_RETRIEVAL.md) · [Resultados](EVALUACION_RAG.md)

@@ -249,3 +249,7 @@ La suite habitual `python -m pytest -q` cubre el cliente con dobles y omite las 
 El Issue #23 incorpora la ingesta manual del corpus oficial en el esquema `rag`. Exporta el paquete desde un commit oficial con `scripts/preparar_corpus_rag.py`. El contenedor consume el ZIP por entrada estándar y PostgreSQL conserva documentos, órdenes, metadatos de vigencia y un índice textual en español. Un volumen nuevo aplica `003-rag.sql` con Compose. Un volumen existente requiere aplicar esa migración explícitamente.
 
 Los comandos `ingestar`, `stats` y `verificar` se ejecutan con el rol de aplicación. La indexación semántica queda pendiente de una autorización oficial para un modelo de embeddings. [Procedimiento y pruebas de la ingesta](docs/SPEC_RAG_INDEXACION.md)
+
+## Búsqueda en manuales
+
+`buscar_manuales` consulta la versión del corpus indicada por `PIA3_RAG_CORPUS_ID`. Devuelve texto, citas y metadatos de vigencia y aplicabilidad. Por defecto admite manuales vigentes y órdenes de archivo. Usa `consultar_equipos` para los límites operativos y `consultar_stock` para las cantidades de referencia. [Configuración, filtros y ejemplo](docs/SPEC_RAG_RETRIEVAL.md) · [Evaluación oficial de retrieval](docs/EVALUACION_RAG.md)

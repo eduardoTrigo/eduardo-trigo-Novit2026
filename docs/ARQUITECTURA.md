@@ -72,12 +72,15 @@ El servidor stdio es un proceso que el cliente inicia por sesión. Publica `cons
 
 Un operador exporta un paquete desde el SHA oficial y activa la ingesta con `python -m sistema.rag_ingest`. El proceso valida las fuentes, prepara un chunk por sección u orden, y publica una versión completa de forma atómica. PostgreSQL construye un índice textual en español y separa los vectores por corpus, identidad del modelo y ámbito de uso. La preparación de embeddings ocurre antes de abrir la transacción de escritura. El proceso es independiente del arranque del agente y queda a la espera de un proveedor autorizado para generar vectores operativos. [Mini spec RAG](SPEC_RAG_INDEXACION.md)
 
+## Recuperación documental en el Issue #25
+
+`buscar_manuales` reutiliza el catálogo de tools e inicia el recuperador PostgreSQL al recibir una consulta válida. El retriever lee un corpus identificado en una transacción de solo lectura y devuelve citas filtradas por sus metadatos. La evaluación de Novit se ejecuta por separado desde el checkout oficial. MCP conserva su allowlist de dos tools. [Contratos y ranking](SPEC_RAG_RETRIEVAL.md) · [Evaluación](EVALUACION_RAG.md)
+
 ## Arquitectura propuesta para completar Entrega 1
 
 - **Parte de voz y tablet.** Agregar extracción validada a `FilaParte` a partir de la transcripción y de los datos de planta e historian. Descargar y asociar las fotos. Publicar el borrador en la tablet, procesar `planta/respuestas` y conservar la confirmación. Integrar este flujo sin demorar la alerta local.
 - **Estado de enlace y pendientes.** Derivar del estado efectivo del sistema los campos de enlace y pendientes del latido.
-- **Búsqueda en manuales.** Incorporar la tool con la recuperación documental y su contrato de consulta.
-- **RAG y armado de contexto.** Agregar embeddings autorizados al corpus documentado, recuperar y citar secciones aplicables y evaluar la recuperación. El contexto combinará documentación con datos operativos de API o SQL para límites y stock.
+- **RAG y armado de contexto.** Agregar embeddings autorizados al corpus, evaluar coseno y fusión híbrida, e incorporar citas al contexto junto con datos operativos de API o SQL.
 
 El análisis completo de las causas de un escalado y la generación de órdenes de trabajo corresponden a entregas posteriores.
 
