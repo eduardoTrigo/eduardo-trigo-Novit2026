@@ -1,17 +1,22 @@
 import json
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
-from planta_contrato import FilaParte, MensajeTablet, NotaRecorrida
+from planta_contrato import EstadoOrden, FilaParte, MensajeTablet, NotaRecorrida
 from pydantic import ValidationError
 
 from sistema.context_builder import ErrorContexto, construir_contexto, proyectar_memoria
 from sistema.context_builder_models import (
     Alcance, DatosContexto, EntradaContexto, FalloFuente, Lectura, LecturaMemoria,
-    LimiteDocumental, NotaContexto, Presupuesto, VersionMemoria,
+    LimiteDocumental, NotaContexto, PaginaContexto, Presupuesto, VersionMemoria,
 )
 from sistema.part_memory_store import CapturaMemoria
-from sistema.plant_tool_models import Equipo, HistorialSensores, Muestra, Pagina, Sensor, Stock
+from sistema.plant_tool_models import (
+    Equipo, HistorialSensores, ListaMateriales, Material, MaterialConStock, Muestra, Orden,
+    Pagina, PaginaReferencia, Sensor, Stock, Tarea,
+)
+from sistema.plant_tools import CatalogoToolsPlanta
 from sistema.rag_corpus import Aplicabilidad
 from sistema.rag_retrieval import ResultadoManual, ResultadoManuales
 
@@ -287,3 +292,174 @@ def test_postgres_caido_conserva_captura_local_verificada():
     assert r.contexto.memoria.origen == "memoria_sqlite"
     assert r.contexto.memoria.sincronizacion == "pendiente"
     assert r.contexto.memoria.datos.respuestas[0].texto == "En kilos"
+
+
+HISTORIAN = "consultar_historial_sensores"
+
+
+@pytest.mark.parametrize("limite", [2, 1])
+def test_catalogo_e_historial_conservan_truncamiento_y_cobertura(limite):
+    primera, reciente = TS - timedelta(seconds=30), TS - timedelta(seconds=1)
+    herramientas = CatalogoToolsPlanta(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=[
+        {"ts": reciente.isoformat(), "valor": 120.0}, {"ts": primera.isoformat(), "valor": 110.0},
+    ])))
+    bruto = herramientas.ejecutar(HISTORIAN, {
+        "tag": "B-102", "variable": "presion_descarga", "desde": TS - timedelta(minutes=1),
+        "hasta": TS, "limite": limite,
+    })
+    lectura = Lectura(obtenida_en=TS, dato=HistorialSensores.model_validate_json(json.dumps(bruto)))
+    resultado = construir_contexto(entrada(datos=DatosContexto(historian=(lectura,))))
+    pagina, = resultado.contexto.paginas_fuente
+    bloque, = resultado.contexto.resultados_tools
+
+    assert pagina.fuente == HISTORIAN and pagina.obtenida_en == TS and bloque.paginas == (pagina.id,)
+    assert (pagina.total, pagina.recibidos, pagina.truncado) == (2, limite, limite == 1)
+    cobertura = pagina.cobertura_historian
+    assert (cobertura.tag, cobertura.variable, cobertura.unidad) == ("B-102", "presion_descarga", "kg/cm2")
+    assert (cobertura.desde, cobertura.hasta) == (TS - timedelta(minutes=1), TS)
+    assert cobertura.primera_recibida == primera
+    assert cobertura.ultima_recibida == (primera if limite == 1 else reciente)
+    assert ((HISTORIAN, "truncada_origen") in motivos(resultado)) == (limite == 1)
+
+
+def _serie_con_items(items, *, total, truncado, desde=None):
+    base = serie()
+    return base.model_copy(update={"dato": base.dato.model_copy(update={
+        "items": items, "total": total, "truncado": truncado, "desde": desde or base.dato.desde,
+    })})
+
+
+@pytest.mark.parametrize("truncado", [False, True])
+def test_compactacion_del_historian_preserva_cobertura_original(truncado):
+    lectura = _serie_con_items(serie().dato.items, total=32 if truncado else 14, truncado=truncado)
+    solicitud = entrada(datos=DatosContexto(historian=(lectura,)), presupuesto=Presupuesto(tope_tools=300))
+    resultado = construir_contexto(solicitud)
+    pagina, = resultado.contexto.paginas_fuente
+    bloque, = resultado.contexto.resultados_tools
+    estados = {d.estado for d in resultado.contexto.estado_fuentes if d.fuente == HISTORIAN}
+
+    assert len(bloque.datos["muestras"]) == 2
+    assert pagina.recibidos == 14 and pagina.total == lectura.dato.total
+    assert pagina.truncado is truncado
+    assert pagina.cobertura_historian.ultima_recibida == TS + timedelta(seconds=1)
+    assert {"fuera_de_alcance", "compactado"} <= estados
+    assert ("truncada_origen" in estados) == truncado
+
+
+def test_pagina_truncada_sobrevive_omision_y_cuenta_como_esencial():
+    lectura = _serie_con_items(serie().dato.items, total=32, truncado=True)
+    solicitud = entrada(datos=DatosContexto(historian=(lectura,)), presupuesto=Presupuesto(tope_tools=1))
+    resultado = construir_contexto(solicitud)
+    serializado = json.loads(resultado.serializar_contexto())
+
+    assert serializado["resultados_tools"] == []
+    assert serializado["paginas_fuente"][0]["truncado"] is True
+    assert {"truncada_origen", "omitido_presupuesto"} <= {
+        d["estado"] for d in serializado["estado_fuentes"] if d["fuente"] == HISTORIAN
+    }
+    assert resultado.uso.bytes_serializados == len(resultado.serializar_contexto().encode())
+    assert resultado.uso.tokens <= solicitud.presupuesto.disponible
+    with pytest.raises(ErrorContexto, match="presupuesto_insuficiente"):
+        construir_contexto(solicitud.model_copy(update={
+            "presupuesto": Presupuesto(tope_tools=1, max_bytes=resultado.uso.bytes_serializados - 1),
+        }))
+
+
+def test_consultas_superpuestas_preservan_paginas_independientes():
+    comun = Muestra(ts=TS - timedelta(seconds=5), valor=110)
+    parcial = _serie_con_items([comun], total=3, truncado=True)
+    completa = _serie_con_items([comun, Muestra(ts=TS, valor=120)], total=2, truncado=False,
+                                desde=TS - timedelta(seconds=10))
+    resultado = construir_contexto(entrada(datos=DatosContexto(historian=(parcial, completa))))
+    paginas = resultado.contexto.paginas_fuente
+    bloque, = resultado.contexto.resultados_tools
+
+    assert {p.id for p in paginas} == set(bloque.paginas)
+    assert {(p.total, p.recibidos, p.truncado) for p in paginas} == {(3, 1, True), (2, 2, False)}
+    assert {p.cobertura_historian.desde for p in paginas} == {parcial.dato.desde, completa.dato.desde}
+    assert [m["valor"] for m in bloque.datos["muestras"]] == [110, 120]
+    assert {(HISTORIAN, "duplicado"), (HISTORIAN, "truncada_origen")} <= motivos(resultado)
+
+
+def test_historial_truncado_sin_muestras_dentro_de_la_ventana():
+    antigua = TS - timedelta(minutes=11)
+    lectura = _serie_con_items([Muestra(ts=antigua, valor=110)], total=12, truncado=True, desde=antigua)
+    resultado = construir_contexto(entrada(datos=DatosContexto(historian=(lectura,))))
+    pagina, = resultado.contexto.paginas_fuente
+
+    assert not resultado.contexto.resultados_tools and pagina.truncado and pagina.recibidos == 1
+    assert pagina.cobertura_historian.ultima_recibida == antigua
+    assert {(HISTORIAN, "sin_coincidencias"), (HISTORIAN, "truncada_origen")} <= motivos(resultado)
+    assert (HISTORIAN, "faltante") not in motivos(resultado)
+
+
+@pytest.mark.parametrize(("campo", "fuente"), [
+    ("equipos", "consultar_equipos"), ("ordenes", "consultar_historial_ordenes"),
+    ("inventario", "consultar_inventario"), ("materiales", "consultar_lista_materiales"),
+    ("tareas", "consultar_catalogo_tareas"),
+])
+def test_otras_tools_paginadas_conservan_total_y_procedencia(campo, fuente):
+    catalogo = dict(total=2, truncado=True)
+    referencia = dict(origen="referencia", sha="a" * 40, **catalogo)
+    material = Material(codigo="KIT", nombre="Kit", unidad="u", costo_usd=1.0)
+    datos = {
+        "equipos": lambda: Pagina[Equipo](items=[equipos().dato.items[1]], **catalogo),
+        "ordenes": lambda: Pagina[Orden](items=[Orden(
+            id="OT-1", equipo="B-102", fecha=TS, estado=EstadoOrden.cerrada, ejecutor="propio",
+            tareas=[], origen="archivo",
+        )], **catalogo),
+        "inventario": lambda: PaginaReferencia[Material](items=[material], **referencia),
+        "materiales": lambda: ListaMateriales(equipo="B-102", estado="definida", items=[
+            MaterialConStock(**material.model_dump(), stock={"yacimiento": 0}),
+        ], **referencia),
+        "tareas": lambda: PaginaReferencia[Tarea](items=[Tarea(codigo="T-1", nombre="Tarea", clase="estandar",
+                                                             equipos=["B-102"])], **referencia),
+    }
+    lectura = Lectura(obtenida_en=TS, dato=datos[campo]())
+    resultado = construir_contexto(entrada(
+        tarea="documentacion" if campo == "ordenes" else "materiales",
+        alcance=Alcance(equipos=("B-102",), codigos=("KIT",), incluir_ordenes=True),
+        datos=DatosContexto(**{campo: (lectura,) if campo == "materiales" else lectura}),
+    ))
+    pagina, = resultado.contexto.paginas_fuente
+    bloque, = resultado.contexto.resultados_tools
+
+    assert pagina.fuente == fuente and pagina.obtenida_en == TS and pagina.cobertura_historian is None
+    assert (pagina.total, pagina.recibidos, pagina.truncado) == (2, 1, True)
+    assert bloque.paginas == (pagina.id,)
+    if campo in ("inventario", "materiales", "tareas"):
+        assert pagina.sha == referencia["sha"] and pagina.origen == "referencia"
+    if campo == "materiales":
+        assert pagina.equipo == "B-102"
+
+
+@pytest.mark.parametrize("truncado", [False, True])
+def test_equipo_sin_coincidencias_en_pagina_completa_o_truncada(truncado):
+    lectura = Lectura(obtenida_en=TS, dato=Pagina[Equipo](
+        items=[equipos().dato.items[0]], total=2 if truncado else 1, truncado=truncado,
+    ))
+    resultado = construir_contexto(entrada(datos=DatosContexto(equipos=lectura)))
+    estados = {d.estado for d in resultado.contexto.estado_fuentes if d.fuente == "consultar_equipos"}
+
+    assert not resultado.contexto.resultados_tools
+    assert "sin_coincidencias" in estados and "fuera_de_alcance" in estados and "vacia" not in estados
+    assert ("faltante" in estados) == (not truncado)
+    assert ("truncada_origen" in estados) == truncado
+
+
+@pytest.mark.parametrize("cambio", [{"truncado": "true"}, {"total": -1}, {"campo_extra": 1}])
+def test_metadatos_de_pagina_estrictos(cambio):
+    with pytest.raises(ValidationError):
+        PaginaContexto.model_validate(dict(id=1, fuente=HISTORIAN, obtenida_en=TS, total=2,
+                                          recibidos=1, truncado=True) | cambio)
+
+
+def test_metadatos_independientes_no_reintroducen_datos_sensibles():
+    lectura = serie()
+    lectura = lectura.model_copy(update={
+        "dato": lectura.dato.model_copy(update={"unidad": "API_KEY=valor-falso", "total": 20, "truncado": True}),
+    })
+    resultado = construir_contexto(entrada(datos=DatosContexto(historian=(lectura,))))
+    pagina, = resultado.contexto.paginas_fuente
+    assert pagina.truncado and pagina.cobertura_historian is None
+    assert "valor-falso" not in resultado.serializar_contexto()

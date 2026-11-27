@@ -8,7 +8,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, FiniteFloat, J
 
 from sistema.plant_tool_models import (
     Codigo, Equipo, HistorialSensores, ListaMateriales, Material, Orden, Pagina, PaginaReferencia,
-    Sha256, Stock, Tarea, Unidad, Variable,
+    Sha256, ShaGit, Stock, Tarea, Unidad, Variable,
 )
 from sistema.rag_retrieval import ResultadoManual, ResultadoManuales
 
@@ -19,17 +19,22 @@ class ContratoContexto(BaseModel):
 
 Identidad = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")]
 Positivo = Annotated[int, Field(gt=0)]
+Conteo = Annotated[int, Field(ge=0)]
 TareaContexto = Literal["parte", "aclaracion", "documentacion", "materiales"]
 Tool = Literal[
     "consultar_equipos", "consultar_historial_sensores", "consultar_historial_ordenes", "consultar_inventario",
     "consultar_stock", "consultar_lista_materiales", "consultar_catalogo_tareas", "buscar_manuales",
 ]
 Fuente = Tool | Literal["memoria_sqlite", "memoria_postgres"]
+ToolPaginada = Literal[
+    "consultar_equipos", "consultar_historial_sensores", "consultar_historial_ordenes",
+    "consultar_inventario", "consultar_lista_materiales", "consultar_catalogo_tareas",
+]
 TipoLimite = Literal["alarma_baja", "alarma_alta", "disparo"]
 EstadoDato = Literal[
     "seleccionada", "vacia", "faltante", "no_disponible", "tiempo_agotado", "invalida", "sensible",
     "obsoleta", "indeterminada", "contradictoria", "fuera_de_alcance", "no_aplicable", "duplicado",
-    "compactado", "omitido_presupuesto",
+    "compactado", "omitido_presupuesto", "truncada_origen", "sin_coincidencias",
 ]
 Sincronizacion = Literal["sincronizada", "pendiente", "desalineada", "sin_referencia_local", "no_encontrada"]
 
@@ -183,11 +188,35 @@ class MemoriaContexto(ContratoContexto):
     datos: MemoriaNota | None = None
 
 
+class CoberturaHistorian(ContratoContexto):
+    tag: Codigo
+    variable: Variable
+    unidad: Unidad
+    desde: AwareDatetime
+    hasta: AwareDatetime
+    primera_recibida: AwareDatetime | None
+    ultima_recibida: AwareDatetime | None
+
+
+class PaginaContexto(ContratoContexto):
+    id: Positivo
+    fuente: ToolPaginada
+    obtenida_en: AwareDatetime
+    total: Conteo
+    recibidos: Conteo
+    truncado: bool
+    cobertura_historian: CoberturaHistorian | None = None
+    equipo: Codigo | None = None
+    origen: Literal["referencia"] | None = None
+    sha: ShaGit | None = None
+
+
 class ResultadoTool(ContratoContexto):
     fuente: Tool
     obtenida_en: AwareDatetime
     naturaleza: Literal["definicion_oficial", "medicion_historian", "antecedente", "referencia"]
     datos: dict[str, JsonValue]
+    paginas: tuple[Positivo, ...] = ()
 
 
 class Contradiccion(ContratoContexto):
@@ -222,6 +251,7 @@ class ContextoModelo(ContratoContexto):
     contratos_tools: tuple[ContratoTool, ...]
     documentos: tuple[DocumentoContexto, ...]
     memoria: MemoriaContexto
+    paginas_fuente: tuple[PaginaContexto, ...] = ()
     resultados_tools: tuple[ResultadoTool, ...]
     contradicciones: tuple[Contradiccion, ...]
     estado_fuentes: tuple[DecisionContexto, ...]

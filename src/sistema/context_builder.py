@@ -10,9 +10,9 @@ from planta_contrato import FilaParte, MensajeTablet, NotaRecorrida, RespuestaOp
 from pydantic import AwareDatetime, TypeAdapter
 
 from sistema.context_builder_models import (
-    ContextoModelo, Contradiccion, ContratoTool, DecisionContexto, DocumentoContexto, EntradaActual, EntradaContexto,
-    MemoriaContexto, MemoriaNota, RespuestaMemoria, ResultadoContexto, ResultadoTool, Tool, UsoContexto,
-    VersionMemoria,
+    CoberturaHistorian, ContextoModelo, Contradiccion, ContratoTool, DecisionContexto, DocumentoContexto,
+    EntradaActual, EntradaContexto, MemoriaContexto, MemoriaNota, PaginaContexto, RespuestaMemoria,
+    ResultadoContexto, ResultadoTool, Tool, UsoContexto, VersionMemoria,
 )
 from sistema.part_memory_store import CapturaMemoria
 from sistema.plant_tool_models import (
@@ -38,8 +38,9 @@ _FECHA = TypeAdapter(AwareDatetime)
 _IDENTIDAD_HISTORIAN = "consultar_historial_sensores"
 _ESTADOS_CONTEXTUALES = {
     "faltante", "vacia", "no_disponible", "tiempo_agotado", "invalida", "sensible", "obsoleta",
-    "indeterminada", "contradictoria", "omitido_presupuesto",
+    "indeterminada", "contradictoria", "omitido_presupuesto", "truncada_origen", "sin_coincidencias",
 }
+_TRANSFORMACIONES_PAGINADAS = {"fuera_de_alcance", "duplicado", "compactado"}
 _RESPUESTAS_SIN_DECISION = {"duplicada", "desfasada", "mensaje_desconocido"}
 _MAX_MUESTRAS_POR_SERIE = 16
 _ENTRADAS_TOOL = {
@@ -143,6 +144,7 @@ class _Seleccion:
         self.herramientas = planificar_tools(solicitud)
         self.decisiones = Counter((fallo.fuente, fallo.estado) for fallo in solicitud.datos.fallos)
         self.fallidas = {fallo.fuente for fallo in solicitud.datos.fallos}
+        self.paginas = []
         self.resultados = []
         self.documentos = []
         self.limites = {}
@@ -166,14 +168,41 @@ class _Seleccion:
                 continue
             yield lectura
 
-    def agregar_tool(self, fuente, lectura, naturaleza, datos):
+    def registrar_pagina(self, fuente, lectura, *, cobertura=None):
+        pagina = lectura.dato
+        id_pagina = len(self.paginas) + 1
+        equipo = getattr(pagina, "equipo", None)
+        if cobertura and _SENSIBLE.search(cobertura.model_dump_json()):
+            cobertura = None
+            self.marcar(fuente, "sensible")
+        if equipo and _SENSIBLE.search(equipo):
+            equipo = None
+            self.marcar(fuente, "sensible")
+        self.paginas.append(PaginaContexto(
+            id=id_pagina, fuente=fuente, obtenida_en=lectura.obtenida_en,
+            total=pagina.total, recibidos=len(pagina.items), truncado=pagina.truncado,
+            cobertura_historian=cobertura, equipo=equipo,
+            origen=getattr(pagina, "origen", None), sha=getattr(pagina, "sha", None),
+        ))
+        if pagina.truncado:
+            self.marcar(fuente, "truncada_origen")
+        elif not pagina.items:
+            self.marcar(fuente, "vacia")
+        return id_pagina
+
+    def agregar_tool(self, fuente, lectura, naturaleza, datos, paginas=()):
         if _SENSIBLE.search(_json(datos)):
             self.marcar(fuente, "sensible")
             return False
-        bloque = ResultadoTool(fuente=fuente, obtenida_en=lectura.obtenida_en, naturaleza=naturaleza, datos=datos)
-        if any(b.fuente == fuente and b.datos == datos for b in self.resultados):
-            self.marcar(fuente, "duplicado")
-            return False
+        bloque = ResultadoTool(fuente=fuente, obtenida_en=lectura.obtenida_en, naturaleza=naturaleza,
+                               datos=datos, paginas=paginas)
+        for i, previo in enumerate(self.resultados):
+            if previo.fuente == fuente and previo.datos == datos:
+                if paginas and paginas != previo.paginas:
+                    vinculadas = tuple(dict.fromkeys((*previo.paginas, *paginas)))
+                    self.resultados[i] = previo.model_copy(update={"paginas": vinculadas})
+                self.marcar(fuente, "duplicado")
+                return False
         self.resultados.append(bloque)
         self.marcar(fuente, "seleccionada")
         return True
@@ -184,10 +213,12 @@ class _Seleccion:
         equipos = set(self.solicitud.alcance.equipos)
         variables = set(self.solicitud.alcance.variables)
         for lote in self.lecturas(fuente, (lectura,) if lectura else ()):
-            if not lote.dato.items:
-                self.marcar(fuente, "vacia")
+            pagina = self.registrar_pagina(fuente, lote)
             presentes = {item.tag for item in lote.dato.items}
-            self.marcar(fuente, "faltante", len(equipos - presentes))
+            if not equipos & presentes:
+                self.marcar(fuente, "sin_coincidencias")
+            if not lote.dato.truncado:
+                self.marcar(fuente, "faltante", len(equipos - presentes))
             for item in sorted(lote.dato.items, key=lambda item: item.tag):
                 if item.tag not in equipos:
                     self.marcar(fuente, "fuera_de_alcance")
@@ -199,7 +230,7 @@ class _Seleccion:
                 self.marcar(fuente, "faltante", len(variables - {s.variable for s in sensores}))
                 datos = item.model_dump(mode="json", exclude_none=True, exclude={"sensores"})
                 datos["sensores"] = [s.model_dump(mode="json", exclude_none=True) for s in sensores]
-                if self.agregar_tool(fuente, lote, "definicion_oficial", datos):
+                if self.agregar_tool(fuente, lote, "definicion_oficial", datos, (pagina,)):
                     for sensor in sensores:
                         clave = sensor.tag, sensor.variable
                         actual = (sensor, lote.obtenida_en)
@@ -219,11 +250,15 @@ class _Seleccion:
             if serie.tag not in alcance.equipos or serie.variable not in alcance.variables:
                 self.marcar(_IDENTIDAD_HISTORIAN, "fuera_de_alcance")
                 continue
-            if not serie.items:
-                self.marcar(_IDENTIDAD_HISTORIAN, "vacia")
-                continue
+            cobertura = CoberturaHistorian(
+                tag=serie.tag, variable=serie.variable, unidad=serie.unidad, desde=serie.desde, hasta=serie.hasta,
+                primera_recibida=min((m.ts for m in serie.items), default=None),
+                ultima_recibida=max((m.ts for m in serie.items), default=None),
+            )
+            pagina = self.registrar_pagina(_IDENTIDAD_HISTORIAN, lectura, cobertura=cobertura)
             clave = serie.tag, serie.variable, serie.unidad
-            _, muestras = grupos.setdefault(clave, (lectura, []))
+            _, muestras, paginas = grupos.setdefault(clave, (lectura, [], []))
+            paginas.append(pagina)
             for muestra in serie.items:
                 if not desde <= muestra.ts <= hasta:
                     self.marcar(_IDENTIDAD_HISTORIAN, "obsoleta" if muestra.ts < desde else "fuera_de_alcance")
@@ -234,9 +269,12 @@ class _Seleccion:
                     continue
                 valores.add(identidad)
                 muestras.append(muestra)
-        for (tag, variable, unidad), (lectura, muestras) in sorted(grupos.items()):
+        for (tag, variable, unidad), (lectura, muestras, paginas) in sorted(grupos.items()):
             if not muestras:
-                self.marcar(_IDENTIDAD_HISTORIAN, "faltante")
+                self.marcar(_IDENTIDAD_HISTORIAN, "sin_coincidencias")
+                originales = [self.paginas[p - 1] for p in paginas]
+                if any(p.recibidos for p in originales) and not any(p.truncado for p in originales):
+                    self.marcar(_IDENTIDAD_HISTORIAN, "faltante")
                 continue
             muestras.sort(key=lambda m: (m.ts, m.valor is None, m.valor or 0.0))
             self.marcar(_IDENTIDAD_HISTORIAN, "contradictoria", len(muestras) - len({m.ts for m in muestras}))
@@ -247,7 +285,7 @@ class _Seleccion:
             self.agregar_tool(_IDENTIDAD_HISTORIAN, lectura, "medicion_historian", {
                 "tag": tag, "variable": variable, "unidad": unidad,
                 "muestras": [m.model_dump(mode="json") for m in muestras],
-            })
+            }, tuple(paginas))
 
     def referencias(self):
         datos = self.solicitud.datos
@@ -271,32 +309,33 @@ class _Seleccion:
                 if fuente == "consultar_lista_materiales" and dato.equipo not in alcance.equipos:
                     self.marcar(fuente, "fuera_de_alcance")
                     continue
+                pagina = self.registrar_pagina(fuente, lectura)
                 if fuente == "consultar_lista_materiales" and dato.estado == "sin_lista":
                     self.marcar(fuente, "faltante")
                     continue
-                if not dato.items:
-                    self.marcar(fuente, "vacia")
+                coincidencias = 0
                 for item in dato.items:
                     if fuente == "consultar_historial_ordenes":
-                        if item.equipo in alcance.equipos and item.fecha <= self.solicitud.nota.ts:
-                            self.agregar_tool(fuente, lectura, "antecedente", item.model_dump(mode="json", exclude_none=True))
-                        else:
-                            self.marcar(fuente, "fuera_de_alcance")
-                        continue
-                    if fuente == "consultar_lista_materiales" and not alcance.codigos:
+                        coincide = item.equipo in alcance.equipos and item.fecha <= self.solicitud.nota.ts
+                    elif fuente == "consultar_lista_materiales" and not alcance.codigos:
                         coincide = True
                     else:
                         coincide = item.codigo in alcance.codigos or bool(
                             set(getattr(item, "equipos", None) or ()) & set(alcance.equipos)
                         )
-                    if coincide:
-                        contenido = item.model_dump(mode="json", exclude_none=True)
+                    if not coincide:
+                        self.marcar(fuente, "fuera_de_alcance")
+                        continue
+                    coincidencias += 1
+                    contenido = item.model_dump(mode="json", exclude_none=True)
+                    naturaleza = "antecedente" if fuente == "consultar_historial_ordenes" else "referencia"
+                    if naturaleza == "referencia":
                         contenido.update(origen=dato.origen, sha=dato.sha)
                         if fuente == "consultar_lista_materiales":
                             contenido["equipo"] = dato.equipo
-                        self.agregar_tool(fuente, lectura, "referencia", contenido)
-                    else:
-                        self.marcar(fuente, "fuera_de_alcance")
+                    self.agregar_tool(fuente, lectura, naturaleza, contenido, (pagina,))
+                if not coincidencias:
+                    self.marcar(fuente, "sin_coincidencias")
 
     def seleccionar_documentos(self):
         fuente = "buscar_manuales"
@@ -484,6 +523,7 @@ def construir_contexto(
     seleccion.seleccionar_documentos()
     memoria = seleccion.memoria()
     contradicciones = seleccion.contradicciones()
+    fuentes_paginadas = {p.fuente for p in seleccion.paginas}
     contratos = tuple(ContratoTool(
         nombre=nombre, parametros=tuple(_ENTRADAS_TOOL[nombre].model_fields),
         requeridos=tuple(k for k, campo in _ENTRADAS_TOOL[nombre].model_fields.items() if campo.is_required()),
@@ -512,9 +552,13 @@ def construir_contexto(
         decisiones = seleccion.informe()
         contexto = ContextoModelo(
             instrucciones_confiables=_REGLAS, contratos_tools=contratos,
-            documentos=tuple(seleccion.documentos), memoria=memoria, resultados_tools=tuple(seleccion.resultados),
+            documentos=tuple(seleccion.documentos), memoria=memoria,
+            paginas_fuente=tuple(seleccion.paginas), resultados_tools=tuple(seleccion.resultados),
             contradicciones=contradicciones,
-            estado_fuentes=tuple(d for d in decisiones if d.estado in _ESTADOS_CONTEXTUALES),
+            estado_fuentes=tuple(
+                d for d in decisiones if d.estado in _ESTADOS_CONTEXTUALES
+                or (d.fuente in fuentes_paginadas and d.estado in _TRANSFORMACIONES_PAGINADAS)
+            ),
             entrada_actual=EntradaActual(tarea=solicitud.tarea, nota=solicitud.nota),
         )
         serializado = contexto.model_dump_json(exclude_none=False)
