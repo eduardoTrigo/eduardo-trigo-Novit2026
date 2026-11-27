@@ -13,17 +13,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sistema.b1_events import MAX_FOTOS_B1, ruta_foto_valida
 from sistema.execution_budget import CorteEjecucion
 from sistema.part_context import MAX_BYTES_FOTO_B1
-from sistema.part_extraction import indexar_aliases, normalizar_texto
+from sistema.part_extraction import excluir_referencias_espaciales, indexar_aliases, normalizar_texto
 
 
 PLAZO_FOTO_S = 0.75
 MAX_BYTES_FOTOS_PARTE = 64 * 1024 * 1024
 _MENCION = re.compile(r"\bfoto\s+d(?:e|el)\b")
-_LUGAR = re.compile(
-    r"\b(?:(?:cerca|al\s+lado|detras|delante|debajo|encima|alrededor|enfrente|"
-    r"en\s+las\s+inmediaciones)\s+del?|(?:junto|frente|proxim[oa])\s+al?)\s+[^,]*"
-)
-_COORDINACION = re.compile(r"\b(?:y|e|o|u|ni)\b")
 _CUES = {
     "goteo_empaquetadura": r"\b(?:empaquetadura|goteo)\b",
     "presion_descarga_local": r"\b(?:manometro de descarga|presion de descarga)\b",
@@ -104,15 +99,8 @@ def _asociacion(texto, catalogo, filas):
     patrones = [re.escape(a) for a in sorted(aliases, key=len, reverse=True)]
     patron_aliases = "(" + "|".join(patrones) + r")(?![\w-])"
     referencia = re.compile(r"(?<![\w-])" + patron_aliases)
-    # Un complemento de lugar puede incluir equipos y nombres de variables. Si su
-    # coordinación no enumera solo referencias de lugar, el alcance es incierto.
-    otro_lugar = re.compile(r"\s*(?:(?:de|del|a|al)\s+)?" + patron_aliases + r"\s*")
-    for lugar in _LUGAR.finditer(objetivo):
-        principal, *coordinados = _COORDINACION.split(lugar[0])
-        if len(referencia.findall(principal)) > 1 or any(not otro_lugar.fullmatch(tramo) for tramo in coordinados):
-            return {"motivo": "mencion_ambigua"}
-    objetivo = _LUGAR.sub(" ", objetivo)
-    if re.search(r"\bo\b", prefijo + " " + objetivo):
+    objetivo = excluir_referencias_espaciales(objetivo, referencia)
+    if objetivo is None or re.search(r"\bo\b", prefijo + " " + objetivo):
         return {"motivo": "mencion_ambigua"}
     referencias = referencia.findall(objetivo)
     objetivos = re.findall(r"(?:^\s*|\b(?:de|del)\s+)" + patron_aliases, objetivo)

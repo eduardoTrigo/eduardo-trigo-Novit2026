@@ -104,3 +104,23 @@ Sobre `8b06159`, la matriz inicial reprodujo once fallos. La regla separaba por 
 La prueba integrada confirmó el borrador mixto de B-101 y B-102 en SQLite y recuperó ambas filas tras reabrir la base. La evaluación dirigida produjo la misma salida para las 13 notas antes y después, con STT archivado y texto de referencia. Con STT se mantuvieron 11/13 borradores, 23/24 en TAG y variable, 20/22 en valor, 21/22 en unidad y 9 confirmaciones virtuales. La nota 00011 conservó sus filas y el turno de aclaración.
 
 Se agregaron 22 casos, incluida la prueba integrada del borrador mixto. Pasaron 201 pruebas focalizadas y la suite completa con `PIA3_RAG_CORPUS` obtuvo 675 aprobadas y 22 omitidas. También pasaron `docker compose config --quiet` y `git diff --check`. La validación de esta corrección usó transcripciones archivadas, casos controlados y bases SQLite temporales.
+
+### Cierre técnico
+
+La rama estaba limpia en `211e71b`. Se compararon copias aisladas de `eadc7b0`, `211e71b` y el cierre con 35 casos que comprueban filas, observaciones, dudas y estado del parte. Cumplieron las expectativas de dominio 18, 17 y 35 casos, respectivamente. La base ya admitía dos lecturas en «112 kilos de descarga y rodamiento 65 grados» y conservaba el equipo en «112 kilos de descarga y saqué foto del manómetro, el motor 65 grados». El cierre recupera ambas conductas. Las diferencias intencionales respecto de la base incluyen separar lecturas independientes sin puntuación, admitir observaciones cualitativas completas y evitar usar una ubicación fotográfica como identidad de equipo. [Componentes sin artículo](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/pull/32#discussion_r4720458903) · [Contexto después de una foto](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/pull/32#discussion_r4720458910)
+
+Se conservan equipo y candidatos por oración. Los fragmentos posteriores a una foto llevan sus referencias explícitas aparte del texto de la lectura. La detección de componentes admite la omisión del artículo y conserva los complementos en observaciones como «ruido en motor». «Debajo de la dos» y «frente a la dos» reproducían una atribución indebida en la extracción aunque el vínculo de la foto ya las excluía. Ambos caminos aplican ahora el mismo filtro espacial.
+
+La segunda pasada del diff acumulado reprodujo dos casos adicionales antes de corregirlos. El primero conservaba el equipo anterior cuando una cláusula coordinada después de la foto identificaba otro equipo. El segundo confundía una ubicación entre comas con una lectura. La matriz verifica varias fotos, cambios de equipo, incertidumbre y el estado del turno. El bloque focalizado volvió a probar la confirmación y las cuatro correcciones P2 previas. La revisión concluyó sin regresiones materiales conocidas en el alcance probado.
+
+| Evaluación de las mismas 13 notas | `eadc7b0` | `211e71b` y cierre |
+| --- | ---: | ---: |
+| Borradores con STT archivado | 9/13 | 11/13 |
+| TAG y variable con STT archivado | 21/24 cada uno | 23/24 cada uno |
+| Valor y unidad con STT archivado | 19/22 cada uno | 20/22 y 21/22 |
+| Confirmaciones virtuales con STT archivado | 9 | 9 |
+| Borradores y confirmaciones virtuales con texto de referencia | 10 y 10 | 12 y 10 |
+
+La salida por nota del cierre fue idéntica a la de `211e71b` con ambas transcripciones. Pasaron cuatro integraciones de memoria fotográfica con PostgreSQL aislado. La evidencia usa STT archivado e integraciones con datos controlados.
+
+Pasaron 236 pruebas focalizadas y la suite completa con `PIA3_RAG_CORPUS` obtuvo 710 aprobadas y 22 omitidas. También pasaron `docker compose config --quiet` y `git diff --check`.

@@ -175,6 +175,107 @@ def test_borrador_mixto_con_componente_se_confirma_y_recupera(tmp_path):
     assert confirmado.estado == "confirmado" and confirmado.filas == borrador.pantalla.filas
 
 
+@pytest.mark.parametrize("componente", ["motor", "rodamiento"])
+@pytest.mark.parametrize(("separador", "articulo", "medida"), [
+    (" y ", "", "65 grados"),
+    (" ", "", "midió sesenta y cinco grados"),
+    (", ", "", "65 grados"),
+    (" y ", "el ", "midió sesenta y cinco grados"),
+    (" ", "el ", "65 grados"),
+    (", ", "el ", "midió sesenta y cinco grados"),
+])
+def test_cierre_componente_independiente_con_omisiones_de_stt(componente, separador, articulo, medida):
+    plan = derivar(f"La uno 112 kilos de descarga{separador}{articulo}{componente} {medida}.")
+    assert plan.estado == "borrador_pendiente"
+    assert [(f.tag, f.variable, f.valor, f.unidad) for f in plan.filas] == [
+        ("B-101", "presion_descarga_local", 112, "kg/cm2"),
+        ("B-101", f"temperatura_{componente}_ir", 65, "degC"),
+    ]
+    assert plan.contexto["pendientes"] == [] and not plan.contexto["no_interpretada"]
+    assert plan.mensaje.pantalla.filas == plan.filas
+
+
+@pytest.mark.parametrize(("texto", "tag_motor", "incluye_descarga"), [
+    ("La uno 112 kilos de descarga y saqué foto del manómetro, el motor 65 grados.", "B-101", True),
+    ("La uno 112 kilos de descarga y saqué foto del manómetro y motor 65 grados.", "B-101", True),
+    ("La uno 112 kilos de descarga y saqué foto del manómetro, tomé otra foto del visor, el motor 65 grados.",
+     "B-101", True),
+    ("La uno 112 kilos de descarga y saqué foto del manómetro, la dos el motor 65 grados.", "B-102", True),
+    ("La uno 112 kilos de descarga y saqué foto del manómetro y la dos el motor 65 grados.", "B-102", True),
+    ("Saqué foto de la uno, motor 65 grados.", "B-101", False),
+    ("La uno 112 kilos de descarga y motor 65 grados y saqué foto del manómetro.", "B-101", True),
+    ("La uno 112 kilos de descarga y saqué foto debajo de la dos, el motor 65 grados.", "B-101", True),
+    ("Saqué foto de la uno frente a la dos, motor 65 grados.", "B-101", False),
+    ("Saqué foto de la uno, frente a la dos, motor 65 grados.", "B-101", False),
+])
+def test_cierre_foto_no_cambia_medicion_valida(texto, tag_motor, incluye_descarga):
+    plan = derivar(texto)
+    filas = [("B-101", "presion_descarga_local", 112)] if incluye_descarga else []
+    assert plan.estado == "borrador_pendiente"
+    assert [(f.tag, f.variable, f.valor) for f in plan.filas] == [
+        *filas, (tag_motor, "temperatura_motor_ir", 65),
+    ]
+    assert not plan.contexto["no_interpretada"] and plan.contexto["pendientes"] == []
+    assert plan.mensaje.pantalla.filas == plan.filas
+
+
+@pytest.mark.parametrize(("separador", "lugar"), [
+    (" ", "debajo de la dos"), (" ", "frente a la dos"), (", ", "debajo de la dos"),
+])
+def test_cierre_foto_espacial_no_define_equipo_para_observacion(separador, lugar):
+    plan = derivar(f"Saqué foto de un goteo{separador}{lugar}, hace ruido.")
+    assert plan.estado == "revision_manual" and not plan.filas and plan.mensaje is None
+    assert plan.contexto["no_interpretada"] and plan.contexto["pendientes"] == []
+    assert plan.contexto.get("segmentos_no_interpretados", []) == [
+        {"texto": "hace ruido", "motivo": "lectura_no_resuelta"},
+    ]
+
+
+def test_cierre_conjuncion_despues_de_foto_con_equipo_explicito():
+    plan = derivar("Saqué foto de la uno y la dos vibra en el motor.")
+    assert plan.estado == "borrador_pendiente"
+    assert [(f.tag, f.variable, f.observacion) for f in plan.filas] == [
+        ("B-102", "vibracion", "vibra en el motor"),
+    ]
+    assert plan.contexto["pendientes"] == [] and not plan.contexto["no_interpretada"]
+
+
+@pytest.mark.parametrize(("texto", "estado", "filas"), [
+    ("La uno 112 kilos de descarga y saqué foto de la dos, el motor 65 grados.",
+     "aclaracion_pendiente", [("B-101", "presion_descarga_local", 112)]),
+    ("La uno o la dos hace ruido en motor y saqué foto de la dos, el rodamiento 65 grados.",
+     "aclaracion_pendiente", []),
+    ("La uno 112 kilos de descarga y saqué foto del manómetro. El motor 65 grados.",
+     "revision_manual", [("B-101", "presion_descarga_local", 112)]),
+    ("Saqué foto de la uno. El rodamiento 65 grados.", "revision_manual", []),
+    ("La uno 112 kilos de descarga y saqué foto del manómetro, el motor no midió 65 grados.",
+     "revision_manual", [("B-101", "presion_descarga_local", 112)]),
+    ("La uno 112 kilos de descarga y saqué foto del manómetro, el motor midió.",
+     "revision_manual", [("B-101", "presion_descarga_local", 112)]),
+])
+def test_cierre_foto_no_resuelve_dudas_ni_propaga_contexto_entre_oraciones(texto, estado, filas):
+    plan = derivar(texto)
+    assert plan.estado == estado
+    assert [(f.tag, f.variable, f.valor) for f in plan.filas] == filas
+    if estado == "aclaracion_pendiente":
+        assert plan.mensaje.espera_respuesta
+        assert all(d["opciones"] == ["B-101", "B-102"] for d in plan.contexto["pendientes"])
+        assert not plan.contexto["no_interpretada"]
+    else:
+        assert plan.mensaje is None and plan.contexto["no_interpretada"]
+
+
+@pytest.mark.parametrize("complemento", ["en motor", "en el motor", "en el motor y rodamiento"])
+def test_cierre_componente_en_observacion_conserva_contexto(complemento):
+    plan = derivar(f"La dos hace ruido {complemento}.")
+    assert plan.estado == "borrador_pendiente"
+    fila, = plan.filas
+    assert (fila.tag, fila.variable, fila.valor, fila.unidad, fila.observacion) == (
+        "B-102", "ruido", None, None, f"hace ruido {complemento}",
+    )
+    assert not plan.contexto["no_interpretada"] and plan.contexto["pendientes"] == []
+
+
 def test_lectura_mixta_con_stt_imperfecto_conserva_filas_y_pregunta_equipo_y_unidad():
     plan = derivar(
         "La 1 estar en 102 kilogramos de descarga el rodamiento medio 59 grados con la pistola, "

@@ -38,28 +38,32 @@ _NUMEROS = re.compile(
 )
 _FRASES = re.compile(r"[!?;\n]+|(?<!\d)\.|\.(?!\d)")
 _TOMA_FOTO = re.compile(
-    r"(?:^|,|\by\b)\s*(?:(?:le\s+)?(?:saque|tome|adjunte|dejo)\s+(?:una\s+)?fotos?\b|"
+    r"(?:^|,|\by\b)\s*(?:(?:le\s+)?(?:saque|tome|adjunte|dejo)\s+(?:(?:una|otra)\s+)?fotos?\b|"
     r"fotos?\b(?=\s+d(?:e|el)\b))"
 )
 _PREDICADO = (
     r"(?:(?:que\s+)?(?:no\s+)?(?:tiene|esta|estaba|arranca|parad[ao]|disparad[ao]|"
     r"dio|medio|marco|gotea|pierde|vibra|suena|hace)\b|[+-]?\d)"
 )
-_COMPONENTE = r"el\s+(?:rodamiento|motor)\b"
+_COMPONENTE = r"(?:el\s+)?(?:rodamiento|motor)\b"
 _LECTURA_COMPONENTE = re.compile(
     rf"{_COMPONENTE}\s+(?:{_PREDICADO}|(?:no\s+)?(?:midio|mide|me\s+dio|se\s+midio|marca)\b"
     rf"|(?:(?:menos|aproximadamente|entre)\s+)?{_NUMERAL})"
 )
 _LECTURA_TRAS_FOTO = re.compile(rf"\s*(?:{_PREDICADO}|{_LECTURA_COMPONENTE.pattern}|(?:menos\s+)?{_NUMERAL})")
 _CORTE_FOTO = re.compile(rf"(?<!\d),|,(?!\d)|\by\s+(?={_PREDICADO}|{_LECTURA_COMPONENTE.pattern})")
-_UBICACION_FOTO = re.compile(r"\b(?:cerca|junto|delante|detras|enfrente|al lado|donde)\b")
+_UBICACION_FOTO = re.compile(
+    r"\b(?:(?:cerca|al\s+lado|detras|delante|debajo|encima|alrededor|enfrente|"
+    r"en\s+las\s+inmediaciones)\s+del?|(?:junto|frente|proxim[oa])\s+al?|donde)\s+[^,]*"
+)
+_COORDINACION_ESPACIAL = re.compile(r"\b(?:y|e|o|u|ni)\b")
 _CLAUSULAS = re.compile(
     r"(?<!\bmenos)(?:(?<!\d),|,(?!\d))|\by\s+(?=(?:(?:el|la|las)\s+)?"
     r"(?:temperatura|presion|descarga|diferencial|nivel|correas|"
     r"gotea|pierde|sigue goteando|visor|hace|tiene|ruido|vibra|vibracion)\b)"
 )
 _CORTE_COMPONENTE = re.compile(rf"\s+(?:y\s+)?(?={_COMPONENTE})")
-_ENLACE_COMPONENTE = re.compile(r"\b(?:a|bajo|con|de|desde|en|entre|hacia|hasta|o|para|por|sin|sobre|tras|u)$")
+_ENLACE_COMPONENTE = re.compile(r"\b(?:a|al|bajo|con|de|del|desde|el|en|entre|hacia|hasta|o|para|por|sin|sobre|tras|u)$")
 _INCERTIDUMBRE = re.compile(
     r"\b(?:no|mas o menos|aproximadamente|alrededor de|quizas|creo|entre)\b"
 )
@@ -109,6 +113,16 @@ def normalizar_texto(texto: str) -> str:
         letra for letra in unicodedata.normalize("NFKD", texto.casefold())
         if not unicodedata.combining(letra)
     )
+
+
+def excluir_referencias_espaciales(texto: str, referencias: re.Pattern) -> str | None:
+    """Excluye ubicaciones. Devuelve None cuando no se puede delimitar su alcance."""
+    otro_lugar = re.compile(r"\s*(?:(?:de|del|a|al)\s+)?" + referencias.pattern + r"\s*")
+    for lugar in _UBICACION_FOTO.finditer(texto):
+        principal, *coordinados = _COORDINACION_ESPACIAL.split(lugar[0])
+        if len(referencias.findall(principal)) > 1 or any(not otro_lugar.fullmatch(tramo) for tramo in coordinados):
+            return None
+    return _UBICACION_FOTO.sub(" ", texto)
 
 
 def _entero(tokens: list[str]) -> int | None:
@@ -303,30 +317,34 @@ def interpretar_medicion(
     return valor, unidad
 
 
-def _frases_del_parte(texto, referencias):
+def _fragmentos_de_oracion(oracion, referencias):
+    """Devuelve texto de lectura y, tras una foto, sus referencias directas de equipo."""
+    tomas = list(_TOMA_FOTO.finditer(oracion))
+    if not tomas:
+        yield oracion, None
+        return
+    yield oracion[:tomas[0].start()].strip(), None
     alias = referencias.pattern
     sujeto_foto = re.compile(rf"\b(?:de|del|a)\s+(?P<sujeto>{alias}(?:\s+(?:y|e|o|u|/)\s+{alias})*)\s*$")
-    for frase in _FRASES.split(texto):
-        toma = _TOMA_FOTO.search(frase)
-        if toma is None:
-            yield frase
-            continue
-        if previo := frase[:toma.start()].strip():
-            yield previo
-        complemento = frase[toma.end():]
-        corte = _CORTE_FOTO.search(complemento)
+    corte_foto = re.compile(rf"{_CORTE_FOTO.pattern}|\by\s+(?={alias}{_LECTURA_TRAS_FOTO.pattern})")
+    sujetos = []
+    for indice, toma in enumerate(tomas):
+        fin = tomas[indice + 1].start() if indice + 1 < len(tomas) else len(oracion)
+        complemento = oracion[toma.end():fin]
+        corte = next((m for m in corte_foto.finditer(complemento)
+                      if not _UBICACION_FOTO.match(complemento[m.end():].lstrip())), None)
         if corte is not None:
             referencia, lectura = complemento[:corte.start()], complemento[corte.end():].strip()
         else:
-            fin = next((m.end() for m in referencias.finditer(complemento)
-                        if _LECTURA_TRAS_FOTO.match(complemento, m.end())), None)
-            if fin is None:
-                continue
-            referencia, lectura = complemento[:fin], complemento[fin:].strip()
-        sujeto = sujeto_foto.search(referencia)
-        if sujeto and not referencias.match(lectura) and not _UBICACION_FOTO.search(referencia):
-            lectura = f'{sujeto["sujeto"]} {lectura}'
-        yield lectura
+            corte = next((m.end() for m in referencias.finditer(complemento)
+                          if _LECTURA_TRAS_FOTO.match(complemento, m.end())), len(complemento))
+            referencia, lectura = complemento[:corte], complemento[corte:].strip()
+        directa = excluir_referencias_espaciales(referencia, referencias)
+        if directa and (sujeto := sujeto_foto.search(directa.rstrip(" ,"))):
+            sujetos.extend(referencias.findall(sujeto["sujeto"]))
+        if lectura:
+            yield lectura, sujetos
+            sujetos = []
 
 
 def _clausulas_del_equipo(fragmento):
@@ -347,69 +365,93 @@ def _clausulas_del_equipo(fragmento):
         yield clausula[inicio:].strip()
 
 
-def extraer_parte(texto: str, catalogo: dict) -> ResultadoExtraccion:
-    """Devuelve filas inequívocas y señala lecturas que requieren revisión."""
+def _contexto_tras_foto(nombres, buscar, alias, equipo, candidatos):
+    # Una foto puede aportar contexto inicial. Si ya había equipo, sus candidatos
+    # siguen vigentes y otro objetivo explícito introduce duda en vez de sustituirlos.
+    sugeridos = {e["tag"]: e for n in nombres for e in buscar(n) if candidatos is None or n in alias}
+    if candidatos is None and sugeridos:
+        opciones = list(sugeridos.values())
+        return opciones[0] if len(opciones) == 1 else None, opciones
+    if candidatos and sugeridos.keys() - {e["tag"] for e in candidatos}:
+        return None, list({e["tag"]: e for e in [*candidatos, *sugeridos.values()]}.values())
+    return equipo, candidatos
+
+
+def _clausulas_del_parte(texto, catalogo):
     alias = indexar_aliases(catalogo)
     patrones = [re.escape(a) for a in sorted(alias, key=len, reverse=True)]
     genericos = {"la bomba": "bomba", "el filtro": "filtro", "bomba": "bomba", "filtro": "filtro"}
     patrones.extend([r"[a-z]{1,3}-\d{2,4}[a-z]?", "la bomba", "el filtro",
                      r"(?:bomba|filtro)(?=\s+(?:esta|estar|tiene|medio|me dio|gotea|vibra)\b)"])
     referencias = re.compile(r"(?<![\w-])(" + "|".join(patrones) + r")(?![\w-])")
+
+    def buscar(nombre):
+        if nombre in alias:
+            return list(alias[nombre].values())
+        tipo = genericos.get(nombre)
+        return [e for e in catalogo["equipos"] if e["tipo"] == tipo] if tipo else []
+
+    bombas_mencionadas = {}
+    bomba_sin_identificar = False
+    for oracion in _FRASES.split(texto):
+        equipo = None
+        candidatos = None
+        for frase, sujetos_foto in _fragmentos_de_oracion(oracion, referencias):
+            if sujetos_foto and not referencias.match(frase):
+                equipo, candidatos = _contexto_tras_foto(sujetos_foto, buscar, alias, equipo, candidatos)
+            fragmentos = referencias.split(frase)
+            for indice, fragmento in enumerate(fragmentos):
+                if indice % 2:
+                    equipos = buscar(fragmento)
+                    if indice > 1 and re.fullmatch(r"\s*(?:y|e|o|u|/)\s*", fragmentos[indice - 1]):
+                        equipos = list({e["tag"]: e for e in (*candidatos, *equipos)}.values())
+                    candidatos = equipos
+                    equipo = equipos[0] if len(equipos) == 1 and fragmento in alias else None
+                    if equipo and equipo["tipo"] == "bomba":
+                        bombas_mencionadas[equipo["tag"]] = equipo
+                    elif genericos.get(fragmento) == "bomba" or fragmento.startswith("b-") or any(
+                        candidato["tipo"] == "bomba" for candidato in candidatos
+                    ):
+                        bomba_sin_identificar = True
+                    continue
+                for clausula in _clausulas_del_equipo(fragmento):
+                    opciones = candidatos or []
+                    equipo_clausula = equipo
+                    if candidatos is None and re.search(r"\bdiferencial\b", clausula):
+                        opciones = [e for e in catalogo["equipos"] if e.get("tipo") == "filtro"]
+                    if (candidatos is None and sujetos_foto is None and len(bombas_mencionadas) == 1
+                            and not bomba_sin_identificar and re.match(r"(?:el\s+)?rodamiento\b", clausula)):
+                        equipo_clausula = next(iter(bombas_mencionadas.values()))
+                    yield clausula, equipo_clausula, opciones
+
+
+def extraer_parte(texto: str, catalogo: dict) -> ResultadoExtraccion:
+    """Devuelve filas inequívocas y señala lecturas que requieren revisión."""
     sensores = _sensores(catalogo)
     filas = {}
     conflictos = {}
     dudas = []
     segmentos = []
-    bombas_mencionadas = {}
-    bomba_sin_identificar = False
-
     texto = re.sub(r"\bmenos\s+,", "menos,", normalizar_texto(texto))
     # La coma de «parada, en reserva» pertenece a la misma observación de estado.
     texto = re.sub(r"\b(parad[ao]),\s*(en reserva)\b", r"\1 \2", texto)
-    for frase in _frases_del_parte(texto, referencias):
-        equipo = None
-        candidatos = []
-        fragmentos = referencias.split(frase)
-        for indice, fragmento in enumerate(fragmentos):
-            if indice % 2:
-                equipos = list(alias.get(fragmento, {}).values())
-                if not equipos and fragmento in genericos:
-                    equipos = [e for e in catalogo["equipos"] if e["tipo"] == genericos[fragmento]]
-                if indice > 1 and re.fullmatch(r"\s*(?:y|e|o|u|/)\s*", fragmentos[indice - 1]):
-                    equipos = list({e["tag"]: e for e in (*candidatos, *equipos)}.values())
-                candidatos = equipos
-                equipo = equipos[0] if len(equipos) == 1 and fragmento in alias else None
-                if equipo and equipo["tipo"] == "bomba":
-                    bombas_mencionadas[equipo["tag"]] = equipo
-                elif genericos.get(fragmento) == "bomba" or fragmento.startswith("b-") or any(
-                    candidato["tipo"] == "bomba" for candidato in candidatos
-                ):
-                    bomba_sin_identificar = True
-                continue
-            for clausula in _clausulas_del_equipo(fragmento):
-                opciones = candidatos
-                equipo_clausula = equipo
-                if indice == 0 and re.search(r"\bdiferencial\b", clausula):
-                    opciones = [e for e in catalogo["equipos"] if e.get("tipo") == "filtro"]
-                if (indice == 0 and len(bombas_mencionadas) == 1 and not bomba_sin_identificar
-                        and re.match(r"\s*(?:el )?rodamiento\b", clausula)):
-                    equipo_clausula = next(iter(bombas_mencionadas.values()))
-                fila, duda = _fila(clausula, equipo_clausula, sensores, opciones)
-                if isinstance(duda, dict):
-                    if duda not in dudas:
-                        dudas.append(duda)
-                elif duda:
-                    segmentos.append({"texto": clausula, "motivo": "lectura_no_resuelta"})
-                if fila is None:
-                    continue
-                clave = (fila.tag, fila.variable)
-                if clave not in filas and clave not in conflictos:
-                    filas[clave] = fila
-                    continue
-                anteriores = conflictos.get(clave) or [filas[clave]]
-                if not any(lecturas_equivalentes(anterior, fila) for anterior in anteriores):
-                    filas.pop(clave, None)
-                    conflictos[clave] = [*anteriores, fila]
+    for clausula, equipo, candidatos in _clausulas_del_parte(texto, catalogo):
+        fila, duda = _fila(clausula, equipo, sensores, candidatos)
+        if isinstance(duda, dict):
+            if duda not in dudas:
+                dudas.append(duda)
+        elif duda:
+            segmentos.append({"texto": clausula, "motivo": "lectura_no_resuelta"})
+        if fila is None:
+            continue
+        clave = (fila.tag, fila.variable)
+        if clave not in filas and clave not in conflictos:
+            filas[clave] = fila
+            continue
+        anteriores = conflictos.get(clave) or [filas[clave]]
+        if not any(lecturas_equivalentes(anterior, fila) for anterior in anteriores):
+            filas.pop(clave, None)
+            conflictos[clave] = [*anteriores, fila]
 
     for (tag, variable), alternativas in conflictos.items():
         if all(f.valor is not None for f in alternativas):
