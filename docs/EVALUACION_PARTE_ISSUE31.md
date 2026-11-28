@@ -1,0 +1,214 @@
+# Evaluación dirigida del parte por voz · Issue #31
+
+El preflight verificó la rama limpia `feat/31-voice-part-improvements`, la base `eadc7b0781393229e851f6e01398094cb106a063`, Python 3.12.10, Docker 28.1.1, `planta_contrato` 0.2.0 y 577 tests aprobados con 19 omitidos. La suite utilizó `tmp/rag-corpus-local.zip` con identidad de corpus `83cfec46e9d62b88fcf0ee2767f794fa0fd64ce7277ad41e1d0ccfd20991d1a2`. Los datos habituales quedaron fuera de las pruebas.
+
+## Diagnóstico de las capturas
+
+| Escenario y nota | Evidencia e impacto | Resultado dirigido |
+| --- | --- | --- |
+| martes · 00006 | La referencia dice 112 kg/cm². El STT real entregó 102, fuera del histórico archivado de B-101 (110,9–115,6) pero dentro de sus límites operativos (95–125). El operador corrigió a 112. | La pregunta de rango se conserva para el texto real. La referencia produce borrador directo en ambas versiones. |
+| martes · 00008 | El STT produjo «parada en Dreserbar». Tras resolver el equipo, la política anterior derivaba a revisión cualquier parte íntegramente cualitativo. | B-103 conserva la observación de parada y el fragmento original, que sigue sin acreditar «en reserva». Se obtiene un borrador confirmable por una persona. |
+| martes · 00011 | El STT unió descarga y rodamiento y perdió el artículo antes de «bomba». La unidad quedó como «pc y» y las cifras de descarga fueron 102 y 1610, frente a 112 y 1600 en la referencia. Antes se conservaba solo F-201A a 1,3. | Se conservan las dos filas B-101 y la del filtro. La pregunta de equipo recupera A4a en el replay. Después de elegir B-102 queda una pregunta de unidad que el operador virtual deja pendiente. Con la referencia se obtienen las cuatro filas y se confirma. |
+| fuga · 00006 | «La bomba está parada en reserva». La elección de B-103 funcionaba y el estado anterior impedía el borrador cualitativo. | Borrador con `estado`, valor y unidad nulos. El agente admite confirmación humana. El diálogo oficial devuelve una solicitud de mostrar lo anotado porque filtra las filas sin valor. |
+| fuga · 00001 | La voz reportó una proyección de agua y una foto tomada desde lejos. El registro histórico contiene S1 y la referencia de la foto. | Se conserva como evidencia de nota con revisión manual del parte. La condición de seguridad sigue en su propio circuito. |
+
+Las cuatro notas históricas sin borrador fueron martes 00008 y 00011, y fuga 00001 y 00006. Se identificaron con el registro del diálogo en el Issue #11 y se reprodujeron con la evidencia de STT de 5B. La transcripción archivada de 5B y la del Issue #11 difieren en la nota multiequipo. Las causas observadas incluyen STT, segmentación, incertidumbre de equipo y unidad, y la política anterior del diálogo cualitativo. El replay conserva la falta de una medición reportable en la nota de seguridad. Las fuentes inaccesibles y el presupuesto se ejercitaron con regresiones específicas. [Issue #11](EVALUACION_ISSUE11.md) · [Evidencia 5B](DIAGNOSTICO_B1_5C.md)
+
+## Comparación en las mismas 13 notas
+
+El procedimiento lee los reportes oficiales archivados de 5B y abre las capturas SQLite en modo de solo lectura. Ejecuta por separado el texto de referencia y el STT archivado con el catálogo oficial, fechas originales y el mínimo y máximo histórico guardados donde hay evidencia. Los turnos usan la función original del operador virtual con una semilla fija. Se conservan hasta tres interacciones. Una repetición idéntica de un turno queda fuera del cómputo. Esta medición propia de la sección A usa series resumidas y omite la temporización de MQTT, las colas y la confianza acústica. Los puntajes oficiales siguen en los informes históricos.
+
+| Métrica | STT, antes → después | Referencia, antes → después |
+| --- | ---: | ---: |
+| Campos TAG correctos | 21 → 23 / 24 | 24 → 24 / 24 |
+| Campos variable correctos | 21 → 23 / 24 | 24 → 24 / 24 |
+| Campos valor correctos por fila identificada | 19 → 20 / 22 | 22 → 22 / 22 |
+| Campos unidad correctos por fila identificada | 19 → 21 / 22 | 22 → 22 / 22 |
+| Observaciones con el contenido esperado | 1 → 1 / 2 | 2 → 2 / 2 |
+| Mensajes con el timestamp original | 12/12 → 16/16 | 13/13 → 15/15 |
+| Notas con borrador | 9 → 11 / 13 | 10 → 12 / 13 |
+| Borradores directos en el primer turno | 8 → 8 | 9 → 9 |
+| Confirmaciones virtuales | 9 → 9 | 10 → 10 |
+| Preguntas justificadas por el texto recibido | 3 → 5 | 3 → 3 |
+| Preguntas innecesarias en el replay | 0 → 0 | 0 → 0 |
+| Notas en revisión manual al terminar | 4 → 1 | 3 → 1 |
+| Turnos pendientes al terminar | 0 → 3 | 0 → 2 |
+
+Las 24 filas incluyen las dos observaciones cualitativas. La fila `condicion_insegura` pertenece al circuito S1 y queda fuera del denominador. TAG y variable se comparan como conjuntos con multiplicidad por nota. Valor y unidad requieren un par TAG/variable coincidente. Las observaciones se comparan por contenido normalizado. El propio criterio considera justificada la pregunta por 102 ante la evidencia histórica, aunque el criterio oficial la penalizó porque el audio de referencia describía una nota clara.
+
+El archivo de 13 notas solo tiene una foto esperada para S1. La asociación por fila se evaluó con un caso controlado que menciona dos equipos y la foto de la empaquetadura de B-102. La base carecía de asociación interna y el resultado nuevo vinculó la única foto a `B-102/goteo_empaquetadura`. Dos referencias sin correspondencia explícita permanecen en el nivel de nota. La rectificación de un TAG devuelve la foto a la nota y conserva el vínculo anterior en su versión.
+
+En PowerShell, con la captura de 5B y el repositorio oficial local, se puede repetir la comparación desde la raíz. El ZIP de la base y el directorio de salida deben ser nuevos.
+
+```powershell
+git archive --format=zip --output=tmp/base-issue31.zip eadc7b0781393229e851f6e01398094cb106a063 src
+Expand-Archive tmp/base-issue31.zip tmp/base-issue31
+$env:PYTHONDONTWRITEBYTECODE = '1'
+$captura5B = 'L:/Novit2026/PIA3-eval/issue13-5b-20261124-220350'
+$env:PYTHONPATH = 'tmp/base-issue31/src;../academia2026-tp/planta/sim'
+python scripts/evaluar_parte_issue31.py $captura5B ../academia2026-tp/datos/planta.yaml
+$env:PYTHONPATH = 'src;../academia2026-tp/planta/sim'
+python scripts/evaluar_parte_issue31.py $captura5B ../academia2026-tp/datos/planta.yaml
+```
+
+## Verificación técnica
+
+- **Regresiones y suite.** 605 aprobadas y 19 omitidas con el corpus local. Se verificaron la extracción mixta, las observaciones, la negación, las unidades, los conflictos, la cobertura histórica, la asociación y sus correcciones, la recuperación tras reapertura, el presupuesto, B1 y seguridad.
+- **PostgreSQL aislado.** Seis integraciones aprobadas en PostgreSQL 16 con pgvector. La foto apareció en el contexto de las dos versiones proyectadas y en la parte confirmada. El binario se recuperó de SQLite por SHA-256. Se verificaron el rol de aplicación, el timeout y una operación vectorial real.
+- **Docker con motor controlado.** Mosquitto real en loopback, descarga de WAV y foto por HTTP, borrador y confirmación por MQTT, evidencia recuperada de SQLite y proyección local. `ejecucion_partes` registró 11 pasos y 1.299 ms activos acumulados en la nota confirmada. S1 se publicó antes de que la foto de otra nota fallara con 404. Esa nota conservó el parte en espera de operador con 9 pasos y 32 ms activos. El presupuesto de los dos contenedores auxiliares sumó 0,95 CPU y 896 MiB, dentro del máximo agregado de 4 CPU y 8 GiB junto al agente y PostgreSQL habituales.
+- **Docker con WAV archivado.** Se descargó por HTTP el audio de `martes-tranquilo` 00011, originalmente generado por el simulador, y se transcribió realmente con `faster-whisper base` desde la caché montada en solo lectura, sin red externa. Se reprodujo el STT histórico. El worker guardó tres filas inequívocas y una aclaración de equipo. Esta prueba llega hasta la aclaración inicial del audio archivado.
+- **Configuración y diff.** `docker compose config --quiet` y `git diff --check` terminaron correctamente. Los procedimientos aislados conservaron sus datos y no ejecutaron el corrector.
+
+Quedan pendientes la medición integral desde la emisión de la nota, el recorrido con voz humana real hasta la confirmación y la nueva medición oficial de A1–A4. CT-1 y RG-1 conservan su estado parcial y la autorización oficial de modelos sigue pendiente. Si la asociación es incierta, la foto queda en la nota. Si se alcanza el límite de almacenamiento, quedan la referencia, su asociación y el estado de descarga omitida. [Especificación y recuperación de evidencia](SPEC_PARTE_VOZ.md) · [Plan de Entrega 1](PLAN.md)
+
+## Regresiones del PR #32
+
+La revisión partió de `2b5ca1b` en `feat/31-voice-part-improvements`, con el árbol limpio. Las regresiones iniciales dieron siete fallos y tres casos de control aprobados. [Observaciones cualitativas](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/pull/32#discussion_r4719680075) · [Asociación posterior a una aclaración](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/pull/32#discussion_r4719680092)
+
+| Entrada | En `2b5ca1b` | Con la corrección |
+| --- | --- | --- |
+| «Saqué foto de la tres, tiene las correas flojas» | El filtro descartaba la frase completa. | El borrador incluye `B-103/estado_correas`, valor y unidad nulos y la observación «tiene las correas flojas». |
+| «Saqué foto de las correas de la tres» | La referencia quedaba fuera de las lecturas. | La referencia se conserva a nivel de nota y el parte queda sin contenido reportable. |
+| «La dos 1640 pc de descarga. Saqué foto del manómetro de descarga de la dos» | La foto quedaba a nivel de nota incluso después de responder «psi». | La primera versión guarda el objetivo pendiente. Tras la aclaración, la segunda vincula la foto a `B-102/presion_descarga_local`. |
+
+Las pruebas integradas ejercitaron el descargador real del worker con transporte HTTP controlado. Tras reabrir SQLite se resolvieron una duda de unidad y una de valor. En cada flujo se registró un solo GET, se mantuvieron la identidad, SHA-256, ruta, timestamp, MIME, tamaño, estado y evidencia, y el parte se confirmó con una respuesta explícita. Se verificaron respuestas duplicadas y desfasadas, ambigüedad, varias fotos, cambios de TAG y el límite de pasos e interacciones. Los registros previos sin un objetivo guardado siguen siendo legibles y conservan su estado.
+
+En PostgreSQL 16 aislado, las siete integraciones aprobaron. La proyección guardó el objetivo pendiente en el primer turno y la asociación resuelta en el borrador siguiente y en el parte confirmado. El contenido binario permaneció en SQLite.
+
+La suite completa con `PIA3_RAG_CORPUS` terminó con 628 pruebas aprobadas y 20 omitidas. La integración nueva se ejecutó en la pasada separada de PostgreSQL. También pasaron `docker compose config --quiet` y `git diff --check`.
+
+La ejecución del evaluador existente sobre las mismas 13 notas, tanto con STT archivado como con referencia, dio la misma salida para `2b5ca1b` y para la corrección. Con STT se mantuvieron 11/13 borradores, 23/24 en TAG y variable, 20/22 en valor, 21/22 en unidad y 9 confirmaciones virtuales. La prueba de regresión y la evaluación dirigida usan casos y métricas propios de este incremento. Los informes históricos conservan sus resultados oficiales.
+
+### Referencias espaciales
+
+Sobre `a9343d7`, las regresiones iniciales reprodujeron 12 fallos. El patrón interpretaba «de la dos» en «foto de un goteo cerca de la dos» como evidencia del equipo fotografiado. También tomaba un segundo equipo mencionado solo como ubicación como otro posible objetivo, lo que impedía vincular fotos con un objetivo directo. [Observación del PR #32](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/pull/32#discussion_r4719976778)
+
+El análisis excluye los complementos espaciales antes de identificar equipo y variable. «Foto de un goteo al lado de la dos» queda a nivel de nota, sin objetivo pendiente. «Foto del goteo de la dos al lado de la tres» conserva el objetivo B-102. Si una coordinación deja incierto el alcance del complemento, la foto queda a nivel de nota. Las pruebas cubren TAG, alias, aclaración de unidad, confirmación y recuperación con el mismo binario y SHA-256.
+
+La evaluación dirigida de las 13 notas dio salida idéntica antes y después con el STT archivado y con texto de referencia. Con STT se mantuvieron 11/13 borradores, 23/24 en TAG y variable, 20/22 en valor, 21/22 en unidad y 9 confirmaciones virtuales. Las asociaciones históricas ya persistidas quedan fuera del reprocesamiento.
+
+La suite con `PIA3_RAG_CORPUS` obtuvo 653 aprobadas y 22 omitidas. Las nueve integraciones aisladas de PostgreSQL incluyeron la proyección de la referencia espacial a nivel de nota tras la aclaración y confirmación. También pasaron `docker compose config --quiet` y `git diff --check`.
+
+### Componentes en observaciones cualitativas
+
+Sobre `8b06159`, la matriz inicial reprodujo once fallos. La regla separaba por espacios ante «el motor» y «el rodamiento», incluso dentro de «hace ruido en el motor». El fragmento aislado se interpretaba como una medición incompleta y el turno terminaba en revisión manual. El ajuste conserva el complemento dentro de la observación y separa el componente que inicia otra lectura. También reconoce ese comienzo después de una referencia fotográfica seguida de «y». [Observación del PR #32](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/pull/32#discussion_r4720299938)
+
+| Caso de la matriz | Resultado verificado |
+| --- | --- |
+| Ruido y vibración en motor o rodamiento, con puntuación variable y componentes coordinados | El borrador conserva la observación completa, con valor y unidad nulos. |
+| Descarga seguida de una medición de motor o rodamiento, con o sin coma y con números escritos o hablados | El borrador conserva las dos mediciones en filas independientes. |
+| Lectura incompleta, negada, aproximada o con componente ambiguo | Se conserva la fila válida. El segmento sin resolver se incluye en el contexto y el turno queda en revisión manual. |
+| Equipo ambiguo y cambio explícito de equipo | La ambigüedad genera una aclaración con la observación completa. La mención explícita conserva las filas de cada equipo. |
+| Foto junto a una observación o una medición | La referencia fotográfica no elimina la lectura. Las regresiones previas de asociación posterior a la aclaración y exclusión de referencias espaciales pasan. |
+
+La prueba integrada confirmó el borrador mixto de B-101 y B-102 en SQLite y recuperó ambas filas tras reabrir la base. La evaluación dirigida produjo la misma salida para las 13 notas antes y después, con STT archivado y texto de referencia. Con STT se mantuvieron 11/13 borradores, 23/24 en TAG y variable, 20/22 en valor, 21/22 en unidad y 9 confirmaciones virtuales. La nota 00011 conservó sus filas y el turno de aclaración.
+
+Se agregaron 22 casos, incluida la prueba integrada del borrador mixto. Pasaron 201 pruebas focalizadas y la suite completa con `PIA3_RAG_CORPUS` obtuvo 675 aprobadas y 22 omitidas. También pasaron `docker compose config --quiet` y `git diff --check`. La validación de esta corrección usó transcripciones archivadas, casos controlados y bases SQLite temporales.
+
+### Cierre técnico
+
+La rama estaba limpia en `211e71b`. Se compararon copias aisladas de `eadc7b0`, `211e71b` y el cierre con 35 casos que comprueban filas, observaciones, dudas y estado del parte. Cumplieron las expectativas de dominio 18, 17 y 35 casos, respectivamente. La base ya admitía dos lecturas en «112 kilos de descarga y rodamiento 65 grados» y conservaba el equipo en «112 kilos de descarga y saqué foto del manómetro, el motor 65 grados». El cierre recupera ambas conductas. Las diferencias intencionales respecto de la base incluyen separar lecturas independientes sin puntuación, admitir observaciones cualitativas completas y evitar usar una ubicación fotográfica como identidad de equipo. [Componentes sin artículo](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/pull/32#discussion_r4720458903) · [Contexto después de una foto](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/pull/32#discussion_r4720458910)
+
+Se conservan equipo y candidatos por oración. Los fragmentos posteriores a una foto llevan sus referencias explícitas aparte del texto de la lectura. La detección de componentes admite la omisión del artículo y conserva los complementos en observaciones como «ruido en motor». «Debajo de la dos» y «frente a la dos» reproducían una atribución indebida en la extracción aunque el vínculo de la foto ya las excluía. Ambos caminos aplican ahora el mismo filtro espacial.
+
+La segunda pasada del diff acumulado reprodujo dos casos adicionales antes de corregirlos. El primero conservaba el equipo anterior cuando una cláusula coordinada después de la foto identificaba otro equipo. El segundo confundía una ubicación entre comas con una lectura. La matriz verifica varias fotos, cambios de equipo, incertidumbre y el estado del turno. El bloque focalizado volvió a probar la confirmación y las cuatro correcciones P2 previas. La revisión concluyó sin regresiones materiales conocidas en el alcance probado.
+
+| Evaluación de las mismas 13 notas | `eadc7b0` | `211e71b` y cierre |
+| --- | ---: | ---: |
+| Borradores con STT archivado | 9/13 | 11/13 |
+| TAG y variable con STT archivado | 21/24 cada uno | 23/24 cada uno |
+| Valor y unidad con STT archivado | 19/22 cada uno | 20/22 y 21/22 |
+| Confirmaciones virtuales con STT archivado | 9 | 9 |
+| Borradores y confirmaciones virtuales con texto de referencia | 10 y 10 | 12 y 10 |
+
+La salida por nota del cierre fue idéntica a la de `211e71b` con ambas transcripciones. Pasaron cuatro integraciones de memoria fotográfica con PostgreSQL aislado. La evidencia usa STT archivado e integraciones con datos controlados.
+
+Pasaron 236 pruebas focalizadas y la suite completa con `PIA3_RAG_CORPUS` obtuvo 710 aprobadas y 22 omitidas. También pasaron `docker compose config --quiet` y `git diff --check`.
+
+### Cierre de la observación P2 sobre `7bce7a1`
+
+El preflight encontró `feat/31-voice-part-improvements` limpia, en `7bce7a1` y alineada con su referencia de seguimiento. Se revisó el diff acumulado desde `eadc7b0` y se contrastó la conducta con el Issue #31, el apartado A del Anexo, la rúbrica y `FilaParte` de `planta_contrato` 0.2.0. [Issue #31](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/issues/31) · [Observación P2](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/pull/32#discussion_r4720727657)
+
+En «La dos gotea por la empaquetadura y el motor a 65 grados», el reconocimiento del comienzo de la segunda lectura omitía la preposición «a». La cláusula resultante llegaba junta a `_fila()`, que aceptaba la temperatura y perdía el goteo. La primera pasada de TDD sobre `7bce7a1` reprodujo 28 fallos y obtuvo 22 controles aprobados. La revisión de las fotografías reprodujo cuatro fallos adicionales al usar texto de la lectura posterior como evidencia del objetivo de la foto.
+
+El segmentador usa el mismo comienzo de medición de componente dentro de una frase y después de una foto. Las conjunciones dentro de un numeral hablado se conservan. Las cláusulas con evidencia insuficiente se guardan como segmentos pendientes, y el agente aplica su transición existente a aclaración o revisión manual. La asociación de fotos usa el objetivo delimitado y exige indicios de lectura para descontar un sufijo ambiguo después de una coma. Una referencia espacial directa no asigna el TAG.
+
+| Caso con expectativas de dominio | `eadc7b0` | `7bce7a1` | Resultado del cierre |
+| --- | --- | --- | --- |
+| Goteo y «el motor a 65 grados» o «motor a sesenta y cinco grados» | Ambas filas | Solo temperatura, con borrador | B-102 conserva el goteo con valor y unidad nulos y el motor a 65 degC. |
+| «Hace ruido en el motor» y su variante «en el motor y el rodamiento» | Revisión manual. La variante coordinada pierde parte de la observación. | Borrador con el complemento íntegro | Se conserva el borrador cualitativo con el complemento completo. |
+| Ruido en motor y rodamiento a 59 grados | Ambas filas | Revisión manual sin filas | Se recuperan ruido y temperatura del rodamiento de B-102. |
+| B-101 a 112 kilos de descarga y rodamiento sin artículo, o motor tras una foto intercalada | Ambas filas | Ambas filas | Se conservan 112 kg/cm2 y 65 degC bajo el equipo activo. |
+| Goteo y motor a aproximadamente 65 grados | Goteo y revisión manual | Revisión manual sin filas | Se mantiene el goteo y se guarda la cláusula exacta del motor para revisión. |
+| Goteo seguido de dos componentes con una sola magnitud | Asigna la magnitud al motor y deriva a revisión | Revisión manual sin filas | Solo se conserva el goteo. La magnitud y ambos componentes quedan en el mismo segmento pendiente. |
+| Motor a 65 grados y después «no hace ruido en el rodamiento» | Revisión manual sin filas | Revisión manual sin filas | Conserva la temperatura y la observación negativa con valor y unidad nulos. |
+| Foto de B-102 intercalada en una lectura de B-101, seguida de temperatura sin sujeto | Atribuye la temperatura a B-102 | Pierde la temperatura | Conserva el goteo de B-101 y solicita elegir B-101 o B-102 para la temperatura. |
+| «Cerca de la dos, hace ruido en el motor» | Fila cualitativa de B-102 en revisión | Borrador para B-102 | Revisión manual con el ruido pendiente y sin TAG atribuido. |
+
+Las pruebas verifican unidades, observaciones, segmentos y estados exactos. También cubren negación, rangos y dudas de equipo, lecturas incompletas, decimales, cambios explícitos de TAG, fotos y recuperación. El caso P2 atraviesa el worker, la outbox y SQLite. Publica las dos filas con el timestamp original, exige confirmación explícita y recupera el parte confirmado al reabrir la base. Con un histórico controlado de 70–75 degC, los 65 degC requieren una aclaración de rango antes del borrador y ambas filas se conservan.
+
+La revisión adversarial comprobó que el cambio mantiene las observaciones junto a las fotos, la asociación después de una aclaración, la exclusión de ubicaciones, los complementos de motor o rodamiento, las lecturas sin artículo y el equipo activo entre fotos. También detectó que buscar repetidamente el final de un numeral podía superar el plazo con transcripciones de casi 32.000 caracteres. El reconocimiento recorre los numerales antes de decidir los cortes. Las dos pruebas de límite conservan las filas válidas, el segmento pendiente y el estado de revisión manual.
+
+La evaluación dirigida se repitió desde copias aisladas de las dos revisiones de Git y desde el árbol de trabajo, con las capturas SQLite históricas en solo lectura. El cierre y `7bce7a1` produjeron la misma salida para cada una de las 13 notas y para ambas fuentes de texto.
+
+| Métrica de la evaluación dirigida | `eadc7b0` | `7bce7a1` y cierre |
+| --- | ---: | ---: |
+| STT archivado, borradores y confirmaciones virtuales | 9/13 y 9 | 11/13 y 9 |
+| STT archivado, TAG y variable | 21/24 cada uno | 23/24 cada uno |
+| STT archivado, valor y unidad | 19/22 cada uno | 20/22 y 21/22 |
+| STT archivado, preguntas justificadas y mensajes con timestamp correcto | 3 y 12/12 | 5 y 16/16 |
+| Referencia, borradores y confirmaciones virtuales | 10/13 y 10 | 12/13 y 10 |
+| Referencia, TAG, variable, valor y unidad | 24/24, 24/24, 22/22 y 22/22 | 24/24, 24/24, 22/22 y 22/22 |
+| Referencia, preguntas justificadas y mensajes con timestamp correcto | 3 y 13/13 | 3 y 15/15 |
+
+El replay emplea el operador virtual, transcripciones archivadas y muestras históricas resumidas. La voz de campo, la latencia con el simulador y la calificación oficial quedan pendientes para el cierre de la entrega.
+
+#### Pruebas del cierre
+
+Los 62 casos de voz se ejecutaron con el código de las tres versiones. Aprobaron 2 en `eadc7b0`, 23 en `7bce7a1` y 62 en el cierre. Los fallos de la base incluyen expectativas sobre `segmentos_no_interpretados`, un campo introducido después de esa revisión. La tabla anterior permite comparar las filas y el estado sin depender de ese campo. Los cuatro casos nuevos de asociación fotográfica fallaron sobre `7bce7a1` y aprobaron en el cierre.
+
+| Ejecución | Aprobadas | Fallidas | Omitidas |
+| --- | ---: | ---: | ---: |
+| Regresiones de voz y asociación | 66 | 0 | 0 |
+| Parte por voz y runtime LangChain | 422 | 0 | 0 |
+| Aclaraciones, fotos, mensajes, integración y persistencia SQLite | 149 | 0 | 0 |
+| Suite habitual con `PIA3_RAG_CORPUS` | 776 | 0 | 22 |
+| PostgreSQL 16 con pgvector en Compose aislado | 9 | 0 | 0 |
+
+La suite habitual suma 66 aprobadas respecto de las 710 documentadas en `7bce7a1` y conserva 22 omisiones. Nueve corresponden a PostgreSQL y memoria, ejecutadas en la pasada aislada. Las otras corresponden a MCP con Docker (2), herramientas con el simulador (1), ingesta RAG (3) y retrieval con corpus en PostgreSQL (7). Pytest emitió el aviso de configuración de `pytest-asyncio`.
+
+`docker compose config --quiet` y `git diff --check` terminaron con código 0. PostgreSQL se probó con un puerto local y un volumen aislado, conservado después de detener el contenedor. El primer intento de pytest encontró un error de permisos en su directorio temporal. Las cifras finales corresponden a la ejecución autorizada con directorios temporales locales.
+
+### Auditoría preventiva sobre `63af4f9`
+
+El preflight encontró `feat/31-voice-part-improvements` limpia en `63af4f9c8b4022910211804cc8ee961f39bd3a80`, alineada con la referencia de seguimiento. El diff desde `eadc7b0` abarcaba 21 archivos. [Observación P2](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/pull/32#discussion_r4724819209)
+
+En el caso «Saqué foto de las correas de la dos, tiene las correas flojas y saqué foto de la empaquetadura de la tres», la asociación encontraba solo el primer «foto de» de la oración. Luego cortaba el complemento en la primera coma, dejando fuera la segunda mención y vinculando indebidamente el adjunto a `B-102/estado_correas`. El caso exacto falló antes de editar la implementación. La matriz inicial tuvo 12 fallos y 12 controles aprobados.
+
+La extracción y la asociación recorren ahora las mismas oraciones y detectan las menciones antes de delimitar los objetivos. Para asociar se exige un adjunto con una única mención singular y afirmativa y un complemento explícito. Se cuentan menciones incompletas, repeticiones y formas como «otra» cuando hay un antecedente fotográfico. El texto ambiguo deja el adjunto en la nota sin TAG, variable ni objetivo pendiente. Las cláusulas de lectura conservan su tratamiento y las menciones dudosas carecen de autoridad para aportar equipo.
+
+| Familia de casos | Resultado verificado |
+| --- | --- |
+| Cero adjuntos, adjunto sin mención y varios adjuntos | Sin referencias inventadas. Los adjuntos presentes se conservan a nivel de nota cuando falta correspondencia. |
+| Mención única afirmativa mediante verbo o fórmula nominal, con objetivo explícito | Asociación válida a la fila existente. Si la fila requiere aclaración, se conserva el objetivo pendiente. |
+| Repeticiones, distintas variables o equipos, plurales, elipsis y menciones incompletas, junto a comas, conjunciones o fin de oración | Foto en la nota con `mencion_ambigua`, incluso cuando los objetivos coinciden. |
+| Ubicaciones, negaciones y lecturas después de la foto | Una ubicación o una lectura posterior no identifica el objetivo. Una mención negada tampoco aporta equipo a la lectura. |
+| P2 exacto en el worker | Conserva las correas de B-102 y el goteo de B-103, el binario y su SHA-256 y el timestamp. El operador confirma el borrador explícitamente. |
+| Aclaración de unidad con dos menciones | Se completa la lectura y el adjunto sigue ambiguo. SQLite y PostgreSQL conservan los metadatos en el borrador original, el posterior y el parte confirmado. |
+| Transcripciones de unos 30.000 caracteres | La asociación positiva y la ambigua completan su turno de análisis con un paso. |
+
+La revisión de los 21 archivos acumulados contrastó extracción y asociación con aclaraciones, invalidación por cambios de TAG, presupuesto, escrituras de SQLite, proyección de memoria y outbox. Las regresiones existentes verifican las siete correcciones anteriores: observaciones junto a fotos, asociación tras aclarar, exclusión espacial, componentes dentro de observaciones, lecturas sin artículo, contexto a través de fotos y separación de goteo y temperatura introducida por «a». La auditoría confirmó que la adjudicación solo reconsidera objetivos pendientes sustentados y que una respuesta de aclaración deja el parte esperando confirmación. Las pruebas habituales cubren también S1–S4, B1 y el runtime. Las asociaciones ya persistidas quedan fuera del reprocesamiento.
+
+El replay de las 13 notas se ejecutó con el STT archivado y el texto de referencia en `eadc7b0`, `63af4f9` y el árbol local. El resultado local coincide con `63af4f9` para cada nota y ambas fuentes. Con STT se mantuvieron 11/13 borradores, 23/24 en TAG y variable, 20/22 en valor, 21/22 en unidad y 9 confirmaciones virtuales. Con referencia se mantuvieron 12/13 borradores y 10 confirmaciones. La base tenía 9/13 y 10/13 borradores, respectivamente. La evaluación histórica mide extracción y diálogo. Las pruebas controladas aportan la evidencia específica de asociación fotográfica.
+
+| Ejecución final | Aprobadas | Fallidas | Omitidas |
+| --- | ---: | ---: | ---: |
+| Regresiones nuevas | 28 | 0 | 0 |
+| Parte por voz y runtime | 450 | 0 | 0 |
+| Aclaraciones, fotos y memoria local | 177 | 0 | 0 |
+| Suite habitual con `PIA3_RAG_CORPUS` | 804 | 0 | 23 |
+| PostgreSQL aislado | 10 | 0 | 0 |
+
+Las 23 omisiones habituales incluyen diez pruebas de PostgreSQL y memoria aprobadas en su ejecución aislada. Las 13 restantes corresponden a MCP con Docker (2), herramientas con el simulador (1), ingesta RAG (3) y retrieval (7). La suite suma 28 aprobadas y una omitida respecto de `63af4f9`. La prueba omitida adicional es la nueva proyección de una foto ambigua, aprobada con PostgreSQL. La base de prueba se detuvo y su volumen se conservó. La comprobación de Compose y del diff terminó correctamente.
+
+La validación en campo y la medición integral oficial conservan su seguimiento en Entrega 1. El cierre de esta auditoría queda sujeto a la revisión independiente de los dos diffs exportados.

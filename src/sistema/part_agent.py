@@ -21,6 +21,7 @@ from sistema.part_clarification import preguntar, resolver
 from sistema.part_context import _VARIABLE_SENSOR, _VENTANA, verificar_lectura
 from sistema.part_extraction import extraer_parte
 from sistema.part_messages import crear_borrador
+from sistema.part_photos import capturar_fotos, hay_presupuesto_asociacion, reconsiderar_fotos
 from sistema.part_reply import interpretar_respuesta
 from sistema.part_store import ParteGuardado
 from sistema.plant_tool_models import Equipo, HistorialSensores, Muestra, Pagina, Sensor
@@ -57,6 +58,7 @@ class PlanParte:
     mensaje: MensajeTablet | None = None
     contexto: dict | None = None
     resultado: str | None = None
+    archivos_fotos: dict[str, tuple[str, bytes]] = field(default_factory=dict)
 
 
 @dataclass
@@ -82,12 +84,15 @@ def _validar_filas(filas):
 
 
 class AgentePartes:
-    def __init__(self, catalogo, historial=None, *, fuentes_con_timeout=False, modelo: ProveedorExtraccion | None = None):
+    def __init__(self, catalogo, historial=None, *, fuentes_con_timeout=False, modelo: ProveedorExtraccion | None = None,
+                 foto=None):
         self._catalogo = catalogo
         self._historial = historial
         self._fuentes_con_timeout = fuentes_con_timeout
         self._modelo = modelo
+        self._foto = foto
         self._aislador = AisladorLecturas()
+        self._aislador_fotos = AisladorLecturas()
         ensamblar = RunnableLambda(self._ensamblar, name="contexto_parte")
         salida = RunnableLambda(self._validar_salida, name="validacion_salida")
         self.cadena_nota = RunnableLambda(self._derivar, name="derivar_nota") | ensamblar | salida
@@ -143,10 +148,6 @@ class AgentePartes:
         datos = turno.historiales[clave]
         if datos is None:
             raise ValueError("Lectura anterior inaccesible")
-        if isinstance(datos, HistorialSensores):
-            if datos.truncado:
-                raise ValueError("Cobertura histórica incompleta")
-            return [m.model_dump(mode="json") for m in datos.items]
         return datos
 
     def _derivar(self, turno):
@@ -159,10 +160,11 @@ class AgentePartes:
         extraido = turno.control.paso("extraccion_determinista", lambda: extraer_parte(turno.texto, catalogo),
                                       aislador=self._aislador)
         filas = turno.control.paso("validar_candidatos", lambda: _validar_filas(extraido.filas))
+        contexto = {"pendientes": extraido.dudas, "no_interpretada": extraido.no_interpretada,
+                    "segmentos_no_interpretados": extraido.segmentos_no_interpretados}
         if turno.nota.id.startswith("VIVO-"):
-            turno.plan = PlanParte("revision_manual", filas)
+            turno.plan = PlanParte("revision_manual", filas, contexto=contexto)
             return turno
-        contexto = {"pendientes": extraido.dudas, "no_interpretada": extraido.no_interpretada}
         turno.plan = self._preparar(turno, filas, contexto, catalogo, 1)
         return turno
 
@@ -194,7 +196,7 @@ class AgentePartes:
                     duda["confirmar_candidato"] = True
                 estado = "aclaracion_pendiente"
                 mensaje = preguntar(turno.nota, duda, equipos, filas, version)
-            elif contexto.get("no_interpretada") or (filas and all(f.valor is None for f in filas)):
+            elif contexto.get("no_interpretada"):
                 estado = "revision_manual"
             elif not filas:
                 estado = "sin_contenido"
@@ -297,6 +299,19 @@ class AgentePartes:
             turno.control.paso("validar_tablet", lambda: MensajeTablet.model_validate_json(
                 turno.plan.mensaje.model_dump_json(), strict=True,
             ))
+        if turno.parte is None and turno.nota.fotos:
+            fotos, archivos = capturar_fotos(
+                turno.nota, turno.texto, turno.catalogo or {}, turno.plan.filas or [],
+                self._foto, turno.control, self._aislador_fotos,
+            )
+            turno.plan.contexto = (turno.plan.contexto or {}) | {"fotos": fotos}
+            turno.plan.archivos_fotos = archivos
+        elif turno.plan.filas and turno.plan.contexto:
+            fotos = turno.plan.contexto.get("fotos", [])
+            if any(f.get("motivo") == "fila_pendiente" for f in fotos) and hay_presupuesto_asociacion(turno.control):
+                turno.plan.contexto["fotos"] = turno.control.paso(
+                    "reconsiderar_asociacion_foto", lambda: reconsiderar_fotos(fotos, turno.plan.filas),
+                )
         return turno.plan
 
     def _proponer(self, turno):

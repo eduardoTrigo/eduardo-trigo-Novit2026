@@ -121,8 +121,7 @@ def test_vivo_sin_audio_conserva_evidencia_sin_publicar(tmp_path):
 @pytest.mark.parametrize(
     "texto,estado",
     [("Recorrida sin novedad", "sin_contenido"),
-     ("La uno no está en 115 kilos de descarga", "revision_manual"),
-     ("La tres gotea por la empaquetadura", "revision_manual")],
+     ("La uno no está en 115 kilos de descarga", "revision_manual")],
 )
 def test_notas_sin_borrador_evaluable(tmp_path, texto, estado):
     notas, _, borradores, partes, worker = preparar(tmp_path)

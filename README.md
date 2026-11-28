@@ -261,3 +261,5 @@ Los comandos `ingestar`, `stats` y `verificar` se ejecutan con el rol de aplicac
 ## Runtime del parte
 
 `WorkerPartes` ejecuta una cadena determinista de LangChain desde la nota transcrita y en los turnos del operador. SQLite conserva el presupuesto por nota y registra el borrador y su publicación en la misma transacción. El plazo activo provisional es de 10 s y excluye la espera humana y los ciclos de audio y STT. [Contrato, cortes y verificación](docs/SPEC_AGENT_RUNTIME.md)
+
+El parte conserva las filas claras de una nota mixta y pide aclaración por las lecturas dudosas. Las observaciones cualitativas pueden confirmarse desde tablet. Las fotos se descargan en el worker de partes, se asocian cuando el texto identifica una fila y se conservan por hash en SQLite. La memoria en PostgreSQL incluye las referencias y asociaciones. [Parte por voz](docs/SPEC_PARTE_VOZ.md) · [Evaluación del Issue #31](docs/EVALUACION_PARTE_ISSUE31.md)

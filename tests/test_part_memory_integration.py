@@ -14,7 +14,9 @@ from planta_contrato import MensajeTablet, NotaRecorrida, RespuestaOperador
 
 from sistema.part_memory import RepositorioMemoriaPostgres, WorkerMemoria, consultar_memoria
 from sistema.part_memory_store import AlmacenMemoriaLocal
+from sistema.part_worker import WorkerPartes
 from sistema.postgres import ConfiguracionPostgres, ErrorConexionPostgres, conectar_postgres
+from test_part_extraction import definicion_planta
 from test_part_messages import preparar, transcribir_nota
 from test_part_workflow import procesar, respuesta
 from test_security_messages import crear_nota
@@ -27,9 +29,13 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_persiste_conversacion_real_del_worker_y_recupera_tras_fallos(tmp_path, monkeypatch):
-    notas, _, _, partes, worker = preparar(tmp_path)
-    nota = crear_nota().model_copy(update={"id": f"NOTA-MEM-{uuid4().hex}"})
-    transcribir_nota(notas, nota, "La uno está en 110 kilos de descarga")
+    notas, _, _, partes, _ = preparar(tmp_path)
+    nota = crear_nota().model_copy(update={"id": f"NOTA-MEM-{uuid4().hex}",
+                                         "fotos": ["/media/fotos/memoria.jpg"]})
+    texto = "La uno está en 110 kilos de descarga. Saqué foto del manómetro de descarga de la uno."
+    transcribir_nota(notas, nota, texto)
+    binario = b"\xff\xd8\xffprueba\xff\xd9"
+    worker = WorkerPartes(partes, definicion_planta, foto=lambda ruta, *, plazo: ("image/jpeg", binario))
     assert worker.procesar_siguiente()
     local = AlmacenMemoriaLocal(partes.ruta)
     inicial = local.siguiente()
@@ -84,6 +90,53 @@ def test_persiste_conversacion_real_del_worker_y_recupera_tras_fallos(tmp_path, 
     assert [m.id for m in mensajes] == [cambio.mensaje_id, confirmacion.mensaje_id]
     assert [m.pantalla.filas[0].valor for m in mensajes] == [110, 115]
     assert [RespuestaOperador.model_validate(r["payload"]) for r in memoria["respuestas"]] == [cambio, confirmacion]
+    foto, = memoria["parte"]["contexto"]["fotos"]
+    assert foto["tag"] == "B-101" and foto["variable"] == "presion_descarga_local"
+    assert [b["contexto"]["fotos"] for b in memoria["borradores"]] == [[foto], [foto]]
+    assert partes.obtener_foto(foto["sha256"]) == ("image/jpeg", binario)
+    assert "contenido" not in foto
+
+
+@pytest.mark.parametrize(("referencia", "asociable", "motivo"), [
+    ("de la dos", True, "fila_pendiente"),
+    ("de la dos junto a la tres", True, "fila_pendiente"),
+    ("cerca de la dos", False, "sin_mencion_inequivoca"),
+    ("de la dos, el motor a 65 grados y adjunté una foto", False, "mencion_ambigua"),
+])
+def test_proyecta_asociacion_fotografica_entre_versiones(tmp_path, referencia, asociable, motivo):
+    notas, _, _, partes, _ = preparar(tmp_path)
+    nota = crear_nota().model_copy(update={"id": f"NOTA-MEM-{uuid4().hex}",
+                                         "fotos": ["/media/fotos/memoria-aclarada.jpg"]})
+    texto = f"La dos 1640 pc de descarga. Saqué foto del manómetro de descarga {referencia}."
+    transcribir_nota(notas, nota, texto)
+    binario = b"\xff\xd8\xffprueba\xff\xd9"
+    worker = WorkerPartes(partes, definicion_planta, foto=lambda ruta, *, plazo: ("image/jpeg", binario))
+    assert worker.procesar_siguiente()
+    remoto = RepositorioMemoriaPostgres(ConfiguracionPostgres.desde_entorno())
+    memoria = WorkerMemoria(AlmacenMemoriaLocal(partes.ruta), remoto)
+    assert memoria.sincronizar_siguiente()
+    pendiente = remoto.obtener(nota.id).documento["parte"]["contexto"]["fotos"][0]
+    assert pendiente["estado_asociacion"] == "nota" and pendiente["motivo"] == motivo
+    assert pendiente["objetivo_pendiente"] == (
+        {"tag": "B-102", "variable": "presion_descarga_local"} if asociable else None
+    )
+
+    _, _, _, partes, worker = preparar(tmp_path)
+    procesar(partes, worker, respuesta(partes.obtener(nota.id), "psi", identificador=f"RESP-{uuid4().hex}"))
+    procesar(partes, worker, respuesta(partes.obtener(nota.id), "Confirmo", identificador=f"RESP-{uuid4().hex}"))
+    assert memoria.sincronizar_siguiente()
+    documento = remoto.obtener(nota.id).documento
+    assert documento["parte"]["estado"] == "confirmado"
+    inicial, final = [b["contexto"]["fotos"][0] for b in documento["borradores"]]
+    assert inicial == pendiente
+    esperado = ("fila", "B-102", "presion_descarga_local") if asociable else ("nota", None, None)
+    assert (final["estado_asociacion"], final["tag"], final["variable"]) == esperado
+    if not asociable:
+        assert final == inicial
+    for campo in ("id", "sha256", "ruta", "ts", "mime", "bytes", "estado_descarga"):
+        assert final[campo] == inicial[campo]
+    assert partes.obtener_foto(final["sha256"]) == ("image/jpeg", binario)
+    assert documento["parte"]["contexto"]["fotos"] == [final]
 
 
 def test_rol_de_aplicacion_solo_puede_leer_y_proyectar():

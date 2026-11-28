@@ -40,31 +40,30 @@ def mensaje(outbox):
     return MensajeTablet.model_validate_json(outbox.reclamar()["payload"])
 
 
-@pytest.mark.parametrize(("texto", "estado"), [
+@pytest.mark.parametrize(("texto", "descarga"), [
     (
         "La 1 está en 112 kilogramos de descarga el rodamiento medio 59 grados con la pistola, "
         "ambien la bomba está en 1610 pc y de descarga, el filtro a medio 1,3 de diferencial.",
-        "aclaracion_pendiente",
+        112,
     ),
     (
         "La 1 estar en 102 kilogramos de descarga el rodamiento medio 59 grados con la pistola, "
         "ambiana bomba está en 1610 pc y de descarga, el filtro a medio 1,3 de diferencial.",
-        "revision_manual",
+        102,
     ),
 ], ids=["transcripcion-issue11", "transcripcion-5b"])
-def test_aclaracion_depende_de_referencia_de_equipo_en_transcripcion(tmp_path, texto, estado):
+def test_aclaracion_multivariable_con_y_sin_articulo(tmp_path, texto, descarga):
     nota, outbox, partes, _ = iniciar(tmp_path, texto)
     turno = partes.obtener(nota.id)
-    assert turno.estado == estado
+    assert turno.estado == "aclaracion_pendiente"
     assert [(f.tag, f.variable, f.valor, f.unidad) for f in turno.filas] == [
+        ("B-101", "presion_descarga_local", descarga, "kg/cm2"),
+        ("B-101", "temperatura_rodamiento_ir", 59, "degC"),
         ("F-201A", "presion_diferencial", 1.3, "kg/cm2"),
     ]
-    if estado == "aclaracion_pendiente":
-        pregunta = mensaje(outbox)
-        assert pregunta.espera_respuesta
-        assert pregunta.pantalla.opciones == ["B-101 · la uno", "B-102 · la dos", "B-103 · la tres"]
-    else:
-        assert outbox.reclamar() is None
+    pregunta = mensaje(outbox)
+    assert pregunta.espera_respuesta
+    assert pregunta.pantalla.opciones == ["B-101 · la uno", "B-102 · la dos", "B-103 · la tres"]
 
 
 @pytest.mark.parametrize("texto", ["La bomba está en ciento veinte", "La bomba está en 120 de descarga"])
@@ -161,8 +160,12 @@ def test_equipo_ambiguo_en_observacion_de_parada_del_simulador(tmp_path):
     assert not pregunta.pantalla.filas and "B-103 · la tres" in pregunta.pantalla.opciones
     procesar(partes, worker, respuesta(turno, "Era la tres."))
     final = partes.obtener(nota.id)
-    assert final.estado == "revision_manual"
+    assert final.estado == "borrador_pendiente"
     assert [(f.tag, f.variable) for f in final.filas] == [("B-103", "estado")]
+    procesar(partes, worker, respuesta(final, "Sí, confirmo.", identificador="CONF-CUALITATIVA"))
+    confirmada = partes.obtener(nota.id)
+    assert confirmada.estado == "confirmado" and confirmada.filas == final.filas
+    assert confirmada.filas[0].valor is None and confirmada.filas[0].unidad is None
 
 
 def test_aclaracion_publicada_y_correlacionada_deriva_a_revision_si_resta_una_negacion(tmp_path):

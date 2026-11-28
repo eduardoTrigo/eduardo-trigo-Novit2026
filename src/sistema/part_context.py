@@ -9,12 +9,15 @@ from planta_contrato import FilaParte
 
 from sistema.b1_events import ruta_foto_valida
 from sistema.part_extraction import convertir_presion
+from sistema.plant_tool_models import HistorialSensores
 
 
 _VENTANA = timedelta(days=45)
 _VARIABLE_SENSOR = {"presion_descarga_local": "presion_descarga"}
 MAX_BYTES_FOTO_B1 = 512 * 1024
 _FIRMAS_FOTO = {"image/jpeg": b"\xff\xd8\xff", "image/png": b"\x89PNG\r\n\x1a\n"}
+_FIN_FOTO = {"image/jpeg": b"\xff\xd9", "image/png": b"\x00\x00\x00\x00IEND\xaeB\x60\x82"}
+_ORIGENES_FOTO = {"http://sim:8100", "http://localhost:8100", "http://127.0.0.1:8100"}
 
 
 class ClientePlanta:
@@ -55,18 +58,28 @@ class ClientePlanta:
         return datos
 
     def foto_b1(self, ruta: str) -> tuple[str, bytes]:
+        return self._descargar_foto(ruta, plazo=3)
+
+    def foto_parte(self, ruta: str, *, plazo: float) -> tuple[str, bytes]:
+        if self.url not in _ORIGENES_FOTO or not math.isfinite(plazo) or plazo <= 0:
+            raise ValueError("Origen o plazo de foto no autorizado")
+        return self._descargar_foto(ruta, plazo=plazo, completa=True)
+
+    def _descargar_foto(self, ruta: str, *, plazo: float, completa=False) -> tuple[str, bytes]:
         if not ruta_foto_valida(ruta):
             raise ValueError("Ruta de foto B1 no autorizada")
-        vencimiento = time.monotonic() + 3
-        with httpx.stream("GET", self.url + ruta, timeout=2.0, follow_redirects=False,
-                          headers={"Accept-Encoding": "identity"}) as respuesta:
+        vencimiento = time.monotonic() + plazo
+        opciones = {"trust_env": False} if completa else {}
+        with httpx.stream("GET", self.url + ruta, timeout=min(2.0, plazo), follow_redirects=False,
+                          headers={"Accept-Encoding": "identity"}, **opciones) as respuesta:
             respuesta.raise_for_status()
             mime = respuesta.headers.get("content-type", "").split(";")[0].strip().lower()
             firma = _FIRMAS_FOTO.get(mime)
             if firma is None or respuesta.headers.get("content-encoding", "identity") != "identity":
                 raise ValueError("Formato de foto B1 no admitido")
-            longitud = int(respuesta.headers.get("content-length", "0"))
-            if not 0 <= longitud <= MAX_BYTES_FOTO_B1:
+            declarada = respuesta.headers.get("content-length")
+            longitud = int(declarada) if declarada is not None else None
+            if longitud is not None and not 0 <= longitud <= MAX_BYTES_FOTO_B1:
                 raise ValueError("Tamaño declarado de foto B1 inválido")
             contenido = bytearray()
             for bloque in respuesta.iter_bytes(chunk_size=16 * 1024):
@@ -77,6 +90,13 @@ class ClientePlanta:
                 contenido.extend(bloque)
             if not contenido.startswith(firma):
                 raise ValueError("Firma de foto B1 inválida")
+            if completa:
+                if time.monotonic() > vencimiento:
+                    raise httpx.ReadTimeout("Plazo de descarga de foto agotado")
+                if (respuesta.status_code != 200 or "content-range" in respuesta.headers
+                        or (longitud is not None and len(contenido) != longitud)
+                        or not contenido.endswith(_FIN_FOTO[mime])):
+                    raise ValueError("Foto incompleta")
             return mime, bytes(contenido)
 
     def historial(
@@ -137,9 +157,12 @@ def _historico(muestras, valor, hasta):
             continue
         if fecha.utcoffset() is not None and hasta - _VENTANA <= fecha <= hasta:
             validas[fecha] = muestra["valor"]
+    cobertura = {"muestras": len(validas), "recibidas": len(muestras),
+                 "primera_muestra": min(validas).isoformat() if validas else None,
+                 "ultima_muestra": max(validas).isoformat() if validas else None}
     if len(validas) < 2:
-        return {"estado": "insuficiente" if muestras else "vacio", "muestras": len(validas)}
-    return _rango(valor, min(validas.values()), max(validas.values())) | {"muestras": len(validas)}
+        return {"estado": "insuficiente" if muestras else "vacio"} | cobertura
+    return _rango(valor, min(validas.values()), max(validas.values())) | cobertura
 
 
 def verificar_lectura(fila: FilaParte, ts: datetime, catalogo: dict, historial) -> dict:
@@ -167,7 +190,23 @@ def verificar_lectura(fila: FilaParte, ts: datetime, catalogo: dict, historial) 
     try:
         if ts.utcoffset() is None:
             raise ValueError("Fecha de nota sin zona horaria")
-        evidencia["historico"] = _historico(historial(fila.tag, variable, ts), valor, ts)
+        inicio = ts - _VENTANA
+        muestras = historial(fila.tag, variable, ts)
+        cobertura = {"fuente": "historian", "desde": inicio.isoformat(), "hasta": ts.isoformat()}
+        if isinstance(muestras, HistorialSensores):
+            if (muestras.tag, muestras.variable, muestras.unidad) != (fila.tag, variable, unidad):
+                raise ValueError("Serie histórica de otra medición")
+            serie = {"truncado": muestras.truncado, "total": muestras.total,
+                     "desde_fuente": muestras.desde.isoformat(), "hasta_fuente": muestras.hasta.isoformat()}
+            datos = _historico([m.model_dump(mode="json") for m in muestras.items], valor, ts)
+            if (muestras.truncado or muestras.total != len(muestras.items)
+                    or muestras.desde > inicio or muestras.hasta < ts):
+                for campo in ("minimo", "maximo"):
+                    datos.pop(campo, None)
+                datos["estado"] = "incompleto"
+            evidencia["historico"] = datos | cobertura | serie
+        else:
+            evidencia["historico"] = _historico(muestras, valor, ts) | cobertura
     except (httpx.HTTPError, ValueError):
         evidencia["historico"] = {"estado": "inaccesible"}
     return evidencia
