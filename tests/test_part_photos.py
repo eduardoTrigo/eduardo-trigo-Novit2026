@@ -1,13 +1,16 @@
 import sqlite3
 import time
 from contextlib import contextmanager
+from datetime import datetime
+from hashlib import sha256
 from unittest.mock import MagicMock
 
 import httpx
 import pytest
+from planta_contrato import FilaParte
 
 from sistema.part_context import ClientePlanta, MAX_BYTES_FOTO_B1
-from sistema.execution_budget import PresupuestoEjecucion
+from sistema.execution_budget import ConsumoEjecucion, ControlEjecucion, PresupuestoEjecucion
 from sistema.part_memory_store import AlmacenMemoriaLocal
 from sistema.part_photos import capturar_fotos, reconsiderar_fotos
 from sistema.part_worker import WorkerPartes
@@ -22,6 +25,9 @@ JPEG = b"\xff\xd8\xffprueba\xff\xd9"
 NOTA_CON_FOTO = ("La uno 112 kilos de descarga. La dos gotea por la empaquetadura. "
                  "Saqué foto de la empaquetadura de la dos.")
 NOTA_UNIDAD = "La dos 1640 pc de descarga. Saqué foto del manómetro de descarga de la dos."
+NOTA_DOS_OBJETIVOS = ("La dos tiene las correas flojas. La tres gotea por la empaquetadura. "
+                     "Saqué foto de las correas de la dos, tiene las correas flojas "
+                     "y saqué foto de la empaquetadura de la tres.")
 
 
 @pytest.mark.parametrize(("base", "ruta"), [
@@ -101,6 +107,146 @@ def test_foto_asociada_persiste_por_hash_y_se_proyecta_sin_binario(tmp_path):
     assert captura["parte"]["contexto"]["fotos"] == captura["borradores"][0]["contexto"]["fotos"] == [evidencia]
     with sqlite3.connect(partes.ruta) as db:
         assert db.execute("SELECT count(*) FROM fotos_partes_blob").fetchone() == (1,)
+
+
+def test_p2_dos_objetivos_en_una_oracion_conservan_la_foto_en_la_nota(tmp_path):
+    descargar = MagicMock(return_value=("image/jpeg", JPEG))
+    nota, _, borradores, partes, _ = iniciar(tmp_path, NOTA_DOS_OBJETIVOS, [FOTO], descargar)
+    parte = partes.obtener(nota.id)
+    assert parte.estado == "borrador_pendiente" and borradores.pendientes() == 1
+    assert [(f.tag, f.variable, f.valor, f.unidad, f.observacion) for f in parte.filas] == [
+        ("B-102", "estado_correas", None, None, "tiene las correas flojas"),
+        ("B-103", "goteo_empaquetadura", None, None, "gotea por la empaquetadura"),
+    ]
+    foto, = parte.contexto["fotos"]
+    assert (foto["estado_asociacion"], foto["motivo"], foto["tag"], foto["variable"],
+            foto["objetivo_pendiente"]) == ("nota", "mencion_ambigua", None, None, None)
+    assert (foto["ruta"], foto["sha256"], datetime.fromisoformat(foto["ts"]), foto["estado_descarga"]) == (
+        FOTO, sha256(JPEG).hexdigest(), nota.ts, "descargada",
+    )
+    _, _, _, partes, worker = preparar(tmp_path)
+    procesar(partes, worker, respuesta(partes.obtener(nota.id), "Confirmo"))
+    final = preparar(tmp_path)[3].obtener(nota.id)
+    assert final.estado == "confirmado" and final.filas == parte.filas
+    assert final.contexto["fotos"] == [foto]
+    assert partes.obtener_foto(foto["sha256"]) == ("image/jpeg", JPEG)
+    descargar.assert_called_once()
+
+
+@pytest.mark.parametrize(("texto_fotos", "rutas", "estado", "motivo"), [
+    ("", [], None, None),
+    ("Saqué foto de las correas de la dos.", [], None, None),
+    ("", [FOTO], "nota", "sin_mencion_inequivoca"),
+    ("Le tomé una foto de las correas de la dos.", [FOTO], "fila", None),
+    ("Adjunté otra foto de las correas de la dos.", [FOTO], "fila", None),
+    ("Tomé una fotografía de las correas de la dos.", [FOTO], "fila", None),
+    ("Dejo foto de las correas de la dos.", [FOTO], "fila", None),
+    ("Foto de las correas de la dos.", [FOTO], "fila", None),
+    ("Fotos de las correas de la dos.", [FOTO], "nota", "mencion_ambigua"),
+    ("Tomé dos fotos de las correas de la dos.", [FOTO], "nota", "mencion_ambigua"),
+    ("Saqué foto de las correas de la dos, otra foto de la empaquetadura de la tres.",
+     [FOTO], "nota", "mencion_ambigua"),
+    ("Saqué foto de las correas de la dos, tiene las correas flojas y saqué foto de las correas de la dos.",
+     [FOTO], "nota", "mencion_ambigua"),
+    ("Saqué foto de las correas de la dos, tiene las correas flojas o foto del motor de la dos.",
+     [FOTO], "nota", "mencion_ambigua"),
+    ("Saqué foto de las correas de la dos, tiene las correas flojas. Otra de la empaquetadura de la tres.",
+     [FOTO], "nota", "mencion_ambigua"),
+    ("Saqué foto de las correas de la dos, tiene las correas flojas y otra.",
+     [FOTO], "nota", "mencion_ambigua"),
+    ("Saqué foto de las correas de la dos, tiene las correas flojas y no tomé foto.",
+     [FOTO], "nota", "mencion_ambigua"),
+    ("Saqué foto de las correas de la dos, tiene las correas flojas y adjunté una foto.",
+     [FOTO], "nota", "mencion_ambigua"),
+    ("Saqué foto de las correas de la dos; tomé foto de otro equipo.",
+     [FOTO], "nota", "mencion_ambigua"),
+    ("Saqué foto de las correas de la dos. También tomé foto.",
+     [FOTO], "nota", "mencion_ambigua"),
+    ("No saqué foto de las correas de la dos.", [FOTO], "nota", "mencion_ambigua"),
+    ("Saqué foto de las correas cerca de la dos.", [FOTO], "nota", "sin_mencion_inequivoca"),
+    ("Saqué foto de las correas de la dos, tiene las correas flojas y foto del motor.",
+     [FOTO, "/media/fotos/otra.jpg"], "nota", "varias_referencias_sin_correspondencia"),
+    ("Le tomé foto de las correas de la dos, tiene las correas flojas y motor a 65 grados.",
+     [FOTO, "/media/fotos/otra.jpg"], "nota", "varias_referencias_sin_correspondencia"),
+], ids=[
+    "sin-mencion-ni-adjunto", "mencion-sin-adjunto", "adjunto-sin-mencion", "tome", "adjunte", "fotografia",
+    "dejo", "nominal", "plural-nominal", "cantidad-plural", "coma-otra-foto", "mismo-objetivo",
+    "otra-variable", "elipsis-otra-oracion", "elipsis-sin-objetivo", "segunda-negada",
+    "segunda-incompleta", "punto-y-coma", "segunda-tras-punto", "negacion-unica", "ubicacion",
+    "varios-adjuntos", "varios-adjuntos-motor",
+])
+def test_matriz_menciones_fotograficas(tmp_path, texto_fotos, rutas, estado, motivo):
+    texto = f"La dos tiene las correas flojas. La tres gotea por la empaquetadura. {texto_fotos}"
+    _, _, _, partes, _ = iniciar(tmp_path, texto, rutas, None)
+    parte = partes.obtener(crear_nota().id)
+    assert parte.estado == "borrador_pendiente"
+    filas = [(f.tag, f.variable, f.valor, f.unidad) for f in parte.filas]
+    esperado = [("B-102", "estado_correas", None, None), ("B-103", "goteo_empaquetadura", None, None)]
+    if "motor a 65 grados" in texto_fotos:
+        esperado.append(("B-102", "temperatura_motor_ir", 65, "degC"))
+    assert filas == esperado
+    fotos = parte.contexto.get("fotos", [])
+    assert [f["ruta"] for f in fotos] == rutas
+    for foto in fotos:
+        objetivo = ("B-102", "estado_correas") if estado == "fila" else (None, None)
+        assert (foto["estado_asociacion"], foto["motivo"]) == (estado, motivo)
+        assert (foto["tag"], foto["variable"]) == objetivo
+        assert foto["objetivo_pendiente"] is None
+
+
+def test_dos_menciones_no_crean_objetivo_pendiente_ni_lo_resuelven_tras_aclarar(tmp_path):
+    texto = ("La dos 1640 pc de descarga. Saqué foto del manómetro de descarga de la dos, "
+             "el motor a 65 grados y adjunté una foto.")
+    descargar = MagicMock(return_value=("image/jpeg", JPEG))
+    nota, _, _, partes, worker = iniciar(tmp_path, texto, [FOTO], descargar)
+    inicial = partes.obtener(nota.id)
+    assert inicial.estado == "aclaracion_pendiente"
+    foto, = inicial.contexto["fotos"]
+    assert (foto["estado_asociacion"], foto["motivo"], foto["objetivo_pendiente"]) == (
+        "nota", "mencion_ambigua", None,
+    )
+    procesar(partes, worker, respuesta(inicial, "psi", identificador="UNIDAD"))
+    borrador = partes.obtener(nota.id)
+    assert borrador.estado == "borrador_pendiente" and borrador.contexto["fotos"] == [foto]
+    assert [(f.variable, f.valor, f.unidad) for f in borrador.filas] == [
+        ("temperatura_motor_ir", 65, "degC"), ("presion_descarga_local", 1640, "psi"),
+    ]
+    procesar(partes, worker, respuesta(borrador, "Confirmo", identificador="FINAL"))
+    documento = AlmacenMemoriaLocal(partes.ruta).siguiente().documento
+    assert documento["parte"]["estado"] == "confirmado"
+    assert all(b["contexto"]["fotos"] == [foto] for b in documento["borradores"])
+    assert documento["parte"]["contexto"]["fotos"] == [foto]
+    descargar.assert_called_once()
+
+
+def test_foto_negada_no_aporta_equipo_a_la_lectura_posterior(tmp_path):
+    nota, _, _, partes, _ = iniciar(
+        tmp_path, "No saqué foto de la dos, el motor a 65 grados.", [FOTO], None,
+    )
+    parte = partes.obtener(nota.id)
+    assert parte.estado == "revision_manual" and parte.filas == []
+    assert parte.contexto["segmentos_no_interpretados"] == [
+        {"texto": "el motor a 65 grados", "motivo": "lectura_no_resuelta"},
+    ]
+    foto, = parte.contexto["fotos"]
+    assert foto["motivo"] == "mencion_ambigua" and foto["objetivo_pendiente"] is None
+
+
+@pytest.mark.parametrize("otra_mencion", ["", " y adjunté una foto"])
+def test_transcripcion_extensa_analiza_todas_las_menciones_en_un_paso(otra_mencion):
+    texto = "no " * 10000 + "fin. Saqué foto de las correas de la dos" + otra_mencion + "."
+    nota = crear_nota().model_copy(update={"fotos": [FOTO]})
+    control = ControlEjecucion(nota.id, "prueba", PresupuestoEjecucion(pasos=2), ConsumoEjecucion(),
+                               inicio=time.monotonic(), reloj=time.monotonic, cancelada=lambda: False)
+    filas = [FilaParte(tag="B-102", variable="estado_correas", observacion="correas flojas")]
+    fotos, archivos = capturar_fotos(nota, texto, definicion_planta(), filas, None, control, None)
+    assert control.consumo.pasos == 1 and archivos == {}
+    foto, = fotos
+    assert foto["ruta"] == FOTO and foto["objetivo_pendiente"] is None
+    if otra_mencion:
+        assert (foto["estado_asociacion"], foto["motivo"], foto["tag"]) == ("nota", "mencion_ambigua", None)
+    else:
+        assert (foto["estado_asociacion"], foto["tag"], foto["variable"]) == ("fila", "B-102", "estado_correas")
 
 
 def test_varias_fotos_sin_correspondencia_quedan_en_la_nota_y_deduplican_bytes(tmp_path):

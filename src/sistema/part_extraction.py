@@ -37,9 +37,17 @@ _NUMEROS = re.compile(
     rf"(?:\s+y\s+medio\b)?"
 )
 _FRASES = re.compile(r"[!?;\n]+|(?<!\d)\.|\.(?!\d)")
-_TOMA_FOTO = re.compile(
-    r"(?:^|,|\by\b)\s*(?:(?:le\s+)?(?:saque|tome|adjunte|dejo)\s+(?:(?:una|otra)\s+)?fotos?\b|"
-    r"fotos?\b(?=\s+d(?:e|el)\b))"
+_LIMITE_FOTO = r"(?:^|,|\b(?:y|e|o|u|ni|pero)\b)"
+_ANTES_DE_TOMA = r"(?:(?:tambien|ademas)\s+)?"
+_DUDA_FOTO = r"\b(?:no(?:\s+se\s+si)?|nunca|jamas|quizas|creo\s+que|tal\s+vez)\s+"
+_VERBO_FOTO = r"\b(?:le\s+)?(?:saque|tome|adjunte|dejo|saco|tomo|adjunto)\s+"
+_MENCION_FOTO = re.compile(
+    rf"(?:(?P<limite>{_LIMITE_FOTO})\s*)?{_ANTES_DE_TOMA}(?P<duda>{_DUDA_FOTO})?"
+    rf"(?P<toma>{_VERBO_FOTO})?\b"
+    r"(?:(?P<cantidad>una|otra|la|las|unas|otras|dos|tres|varias|algunas|[1-9]\d*)\s+)?"
+    r"(?P<nombre>foto(?:grafia)?s?)\b"
+    rf"|{_LIMITE_FOTO}\s*{_ANTES_DE_TOMA}(?P<duda_elipsis>{_DUDA_FOTO})?(?:{_VERBO_FOTO})?"
+    r"(?P<elipsis>otra)\b(?=\s+(?:de|del)\b|\s*(?:,|$))"
 )
 _PREDICADO = (
     r"(?:(?:que\s+)?(?:no\s+)?(?:tiene|esta|estaba|arranca|parad[ao]|disparad[ao]|"
@@ -138,11 +146,41 @@ class ResultadoExtraccion:
     segmentos_no_interpretados: list[dict] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class MencionFoto:
+    inicio: int
+    fin: int
+    delimita_clausula: bool
+    dudosa: bool
+    plural: bool
+
+
 def normalizar_texto(texto: str) -> str:
     return "".join(
         letra for letra in unicodedata.normalize("NFKD", texto.casefold())
         if not unicodedata.combining(letra)
     )
+
+
+def oraciones_con_fotos(texto: str):
+    """Detecta las menciones antes de separar sus complementos."""
+    antecedente = False
+    for original in _FRASES.split(texto):
+        normal = normalizar_texto(original)
+        menciones = []
+        for encontrada in _MENCION_FOTO.finditer(normal):
+            elipsis = encontrada["elipsis"] is not None
+            if elipsis and not antecedente:
+                continue
+            menciones.append(MencionFoto(
+                inicio=encontrada.start(), fin=encontrada.end(),
+                delimita_clausula=elipsis or encontrada["limite"] is not None or encontrada["toma"] is not None,
+                dudosa=bool(encontrada["duda"] or encontrada["duda_elipsis"]),
+                plural=(encontrada["nombre"] or "").endswith("s")
+                or encontrada["cantidad"] not in {None, "una", "otra", "la", "1"},
+            ))
+            antecedente = True
+        yield original, normal, menciones
 
 
 def excluir_referencias_espaciales(texto: str, referencias: re.Pattern) -> str | None:
@@ -385,20 +423,20 @@ def separar_complemento_foto(complemento, referencias, *, exigir_inicio_lectura=
     return complemento[:corte], complemento[corte:].strip()
 
 
-def _fragmentos_de_oracion(oracion, referencias):
+def _fragmentos_de_oracion(oracion, referencias, menciones):
     """Devuelve texto de lectura y, tras una foto, sus referencias directas de equipo."""
-    tomas = list(_TOMA_FOTO.finditer(oracion))
+    tomas = [m for m in menciones if m.delimita_clausula]
     if not tomas:
         yield oracion, None
         return
-    yield oracion[:tomas[0].start()].strip(), None
+    yield oracion[:tomas[0].inicio].strip(), None
     alias = referencias.pattern
     sujeto_foto = re.compile(rf"\b(?:de|del|a)\s+(?P<sujeto>{alias}(?:\s+(?:y|e|o|u|/)\s+{alias})*)\s*$")
     sujetos = []
     for indice, toma in enumerate(tomas):
-        fin = tomas[indice + 1].start() if indice + 1 < len(tomas) else len(oracion)
-        referencia, lectura = separar_complemento_foto(oracion[toma.end():fin], referencias)
-        directa = excluir_referencias_espaciales(referencia, referencias)
+        fin = tomas[indice + 1].inicio if indice + 1 < len(tomas) else len(oracion)
+        referencia, lectura = separar_complemento_foto(oracion[toma.fin:fin], referencias)
+        directa = excluir_referencias_espaciales(referencia, referencias) if not toma.dudosa else None
         if directa and (sujeto := sujeto_foto.search(directa.rstrip(" ,"))):
             sujetos.extend(referencias.findall(sujeto["sujeto"]))
         if lectura:
@@ -473,10 +511,10 @@ def _clausulas_del_parte(texto, catalogo):
 
     bombas_mencionadas = {}
     bomba_sin_identificar = False
-    for oracion in _FRASES.split(texto):
+    for _, oracion, menciones in oraciones_con_fotos(texto):
         equipo = None
         candidatos = None
-        for frase, sujetos_foto in _fragmentos_de_oracion(oracion, referencias):
+        for frase, sujetos_foto in _fragmentos_de_oracion(oracion, referencias, menciones):
             frase = lugar_equipo.sub(" ", frase).strip()
             if sujetos_foto and not referencias.match(frase):
                 equipo, candidatos = _contexto_tras_foto(sujetos_foto, buscar, alias, equipo, candidatos)

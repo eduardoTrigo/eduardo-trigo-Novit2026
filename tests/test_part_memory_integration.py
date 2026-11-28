@@ -97,12 +97,13 @@ def test_persiste_conversacion_real_del_worker_y_recupera_tras_fallos(tmp_path, 
     assert "contenido" not in foto
 
 
-@pytest.mark.parametrize(("referencia", "asociable"), [
-    ("de la dos", True),
-    ("de la dos junto a la tres", True),
-    ("cerca de la dos", False),
+@pytest.mark.parametrize(("referencia", "asociable", "motivo"), [
+    ("de la dos", True, "fila_pendiente"),
+    ("de la dos junto a la tres", True, "fila_pendiente"),
+    ("cerca de la dos", False, "sin_mencion_inequivoca"),
+    ("de la dos, el motor a 65 grados y adjunté una foto", False, "mencion_ambigua"),
 ])
-def test_proyecta_objetivo_pendiente_y_asociacion_resuelta_en_versiones_distintas(tmp_path, referencia, asociable):
+def test_proyecta_asociacion_fotografica_entre_versiones(tmp_path, referencia, asociable, motivo):
     notas, _, _, partes, _ = preparar(tmp_path)
     nota = crear_nota().model_copy(update={"id": f"NOTA-MEM-{uuid4().hex}",
                                          "fotos": ["/media/fotos/memoria-aclarada.jpg"]})
@@ -115,7 +116,7 @@ def test_proyecta_objetivo_pendiente_y_asociacion_resuelta_en_versiones_distinta
     memoria = WorkerMemoria(AlmacenMemoriaLocal(partes.ruta), remoto)
     assert memoria.sincronizar_siguiente()
     pendiente = remoto.obtener(nota.id).documento["parte"]["contexto"]["fotos"][0]
-    assert pendiente["estado_asociacion"] == "nota"
+    assert pendiente["estado_asociacion"] == "nota" and pendiente["motivo"] == motivo
     assert pendiente["objetivo_pendiente"] == (
         {"tag": "B-102", "variable": "presion_descarga_local"} if asociable else None
     )
@@ -130,7 +131,11 @@ def test_proyecta_objetivo_pendiente_y_asociacion_resuelta_en_versiones_distinta
     assert inicial == pendiente
     esperado = ("fila", "B-102", "presion_descarga_local") if asociable else ("nota", None, None)
     assert (final["estado_asociacion"], final["tag"], final["variable"]) == esperado
-    assert final["id"] == inicial["id"] and final["sha256"] == inicial["sha256"]
+    if not asociable:
+        assert final == inicial
+    for campo in ("id", "sha256", "ruta", "ts", "mime", "bytes", "estado_descarga"):
+        assert final[campo] == inicial[campo]
+    assert partes.obtener_foto(final["sha256"]) == ("image/jpeg", binario)
     assert documento["parte"]["contexto"]["fotos"] == [final]
 
 

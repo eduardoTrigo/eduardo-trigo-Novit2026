@@ -16,14 +16,14 @@ from sistema.part_context import MAX_BYTES_FOTO_B1
 from sistema.part_extraction import (
     excluir_referencias_espaciales,
     indexar_aliases,
-    normalizar_texto,
+    oraciones_con_fotos,
     separar_complemento_foto,
 )
 
 
 PLAZO_FOTO_S = 0.75
 MAX_BYTES_FOTOS_PARTE = 64 * 1024 * 1024
-_MENCION = re.compile(r"\bfoto\s+d(?:e|el)\b")
+_INICIO_OBJETIVO = re.compile(r"\s+d(?:e|el)\b")
 _CUES = {
     "goteo_empaquetadura": r"\b(?:empaquetadura|goteo)\b",
     "presion_descarga_local": r"\b(?:manometro de descarga|presion de descarga)\b",
@@ -86,16 +86,19 @@ class FotoParte(BaseModel):
 
 
 def _asociacion(texto, catalogo, filas):
-    menciones = []
-    for frase in re.split(r"[.!?;\n]+", texto):
-        normal = normalizar_texto(frase)
-        if mencion := _MENCION.search(normal):
-            menciones.append((frase.strip(), normal[:mencion.start()], normal[mencion.end():]))
-    if not menciones:
+    unica = None
+    for frase, normal, menciones in oraciones_con_fotos(texto):
+        for mencion in menciones:
+            if unica is not None or mencion.plural or mencion.dudosa:
+                return {"motivo": "mencion_ambigua"}
+            unica = (frase, normal, mencion)
+    if unica is None:
         return {}
-    if len(menciones) > 1:
-        return {"motivo": "mencion_ambigua"}
-    frase, prefijo, objetivo = menciones[0]
+    frase, normal, mencion = unica
+    inicio = _INICIO_OBJETIVO.match(normal, mencion.fin)
+    if not mencion.delimita_clausula or inicio is None:
+        return {}
+    prefijo, objetivo = normal[:mencion.inicio], normal[inicio.end():]
     aliases = indexar_aliases(catalogo)
     if not aliases:
         return {}
@@ -103,7 +106,7 @@ def _asociacion(texto, catalogo, filas):
     patron_aliases = "(" + "|".join(patrones) + r")(?![\w-])"
     referencia = re.compile(r"(?<![\w-])" + patron_aliases)
     objetivo, _ = separar_complemento_foto(objetivo, referencia, exigir_inicio_lectura=True)
-    if re.search(r"\b(?:foto|fotos|no|quizas|creo)\b", prefijo + " " + objetivo):
+    if re.search(r"\b(?:no|quizas|creo)\b", prefijo + " " + objetivo):
         return {"motivo": "mencion_ambigua"}
     objetivo = excluir_referencias_espaciales(objetivo, referencia)
     if objetivo is None or re.search(r"\bo\b", prefijo + " " + objetivo):
@@ -117,7 +120,7 @@ def _asociacion(texto, catalogo, filas):
     if not objetivos or not tags or not variables:
         return {}
     metadata = {"objetivo_pendiente": {"tag": tags.pop(), "variable": variables.pop()},
-                "evidencia": frase, "motivo": "fila_pendiente"}
+                "evidencia": frase.strip(), "motivo": "fila_pendiente"}
     return _vincular(metadata, {(f.tag, f.variable) for f in filas})
 
 

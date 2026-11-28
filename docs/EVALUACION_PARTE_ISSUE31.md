@@ -178,3 +178,37 @@ Los 62 casos de voz se ejecutaron con el código de las tres versiones. Aprobaro
 La suite habitual suma 66 aprobadas respecto de las 710 documentadas en `7bce7a1` y conserva 22 omisiones. Nueve corresponden a PostgreSQL y memoria, ejecutadas en la pasada aislada. Las otras corresponden a MCP con Docker (2), herramientas con el simulador (1), ingesta RAG (3) y retrieval con corpus en PostgreSQL (7). Pytest emitió el aviso de configuración de `pytest-asyncio`.
 
 `docker compose config --quiet` y `git diff --check` terminaron con código 0. PostgreSQL se probó con un puerto local y un volumen aislado, conservado después de detener el contenedor. El primer intento de pytest encontró un error de permisos en su directorio temporal. Las cifras finales corresponden a la ejecución autorizada con directorios temporales locales.
+
+### Auditoría preventiva sobre `63af4f9`
+
+El preflight encontró `feat/31-voice-part-improvements` limpia en `63af4f9c8b4022910211804cc8ee961f39bd3a80`, alineada con la referencia de seguimiento. El diff desde `eadc7b0` abarcaba 21 archivos. [Observación P2](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/pull/32#discussion_r4724819209)
+
+En el caso «Saqué foto de las correas de la dos, tiene las correas flojas y saqué foto de la empaquetadura de la tres», la asociación encontraba solo el primer «foto de» de la oración. Luego cortaba el complemento en la primera coma, dejando fuera la segunda mención y vinculando indebidamente el adjunto a `B-102/estado_correas`. El caso exacto falló antes de editar la implementación. La matriz inicial tuvo 12 fallos y 12 controles aprobados.
+
+La extracción y la asociación recorren ahora las mismas oraciones y detectan las menciones antes de delimitar los objetivos. Para asociar se exige un adjunto con una única mención singular y afirmativa y un complemento explícito. Se cuentan menciones incompletas, repeticiones y formas como «otra» cuando hay un antecedente fotográfico. El texto ambiguo deja el adjunto en la nota sin TAG, variable ni objetivo pendiente. Las cláusulas de lectura conservan su tratamiento y las menciones dudosas carecen de autoridad para aportar equipo.
+
+| Familia de casos | Resultado verificado |
+| --- | --- |
+| Cero adjuntos, adjunto sin mención y varios adjuntos | Sin referencias inventadas. Los adjuntos presentes se conservan a nivel de nota cuando falta correspondencia. |
+| Mención única afirmativa mediante verbo o fórmula nominal, con objetivo explícito | Asociación válida a la fila existente. Si la fila requiere aclaración, se conserva el objetivo pendiente. |
+| Repeticiones, distintas variables o equipos, plurales, elipsis y menciones incompletas, junto a comas, conjunciones o fin de oración | Foto en la nota con `mencion_ambigua`, incluso cuando los objetivos coinciden. |
+| Ubicaciones, negaciones y lecturas después de la foto | Una ubicación o una lectura posterior no identifica el objetivo. Una mención negada tampoco aporta equipo a la lectura. |
+| P2 exacto en el worker | Conserva las correas de B-102 y el goteo de B-103, el binario y su SHA-256 y el timestamp. El operador confirma el borrador explícitamente. |
+| Aclaración de unidad con dos menciones | Se completa la lectura y el adjunto sigue ambiguo. SQLite y PostgreSQL conservan los metadatos en el borrador original, el posterior y el parte confirmado. |
+| Transcripciones de unos 30.000 caracteres | La asociación positiva y la ambigua completan su turno de análisis con un paso. |
+
+La revisión de los 21 archivos acumulados contrastó extracción y asociación con aclaraciones, invalidación por cambios de TAG, presupuesto, escrituras de SQLite, proyección de memoria y outbox. Las regresiones existentes verifican las siete correcciones anteriores: observaciones junto a fotos, asociación tras aclarar, exclusión espacial, componentes dentro de observaciones, lecturas sin artículo, contexto a través de fotos y separación de goteo y temperatura introducida por «a». La auditoría confirmó que la adjudicación solo reconsidera objetivos pendientes sustentados y que una respuesta de aclaración deja el parte esperando confirmación. Las pruebas habituales cubren también S1–S4, B1 y el runtime. Las asociaciones ya persistidas quedan fuera del reprocesamiento.
+
+El replay de las 13 notas se ejecutó con el STT archivado y el texto de referencia en `eadc7b0`, `63af4f9` y el árbol local. El resultado local coincide con `63af4f9` para cada nota y ambas fuentes. Con STT se mantuvieron 11/13 borradores, 23/24 en TAG y variable, 20/22 en valor, 21/22 en unidad y 9 confirmaciones virtuales. Con referencia se mantuvieron 12/13 borradores y 10 confirmaciones. La base tenía 9/13 y 10/13 borradores, respectivamente. La evaluación histórica mide extracción y diálogo. Las pruebas controladas aportan la evidencia específica de asociación fotográfica.
+
+| Ejecución final | Aprobadas | Fallidas | Omitidas |
+| --- | ---: | ---: | ---: |
+| Regresiones nuevas | 28 | 0 | 0 |
+| Parte por voz y runtime | 450 | 0 | 0 |
+| Aclaraciones, fotos y memoria local | 177 | 0 | 0 |
+| Suite habitual con `PIA3_RAG_CORPUS` | 804 | 0 | 23 |
+| PostgreSQL aislado | 10 | 0 | 0 |
+
+Las 23 omisiones habituales incluyen diez pruebas de PostgreSQL y memoria aprobadas en su ejecución aislada. Las 13 restantes corresponden a MCP con Docker (2), herramientas con el simulador (1), ingesta RAG (3) y retrieval (7). La suite suma 28 aprobadas y una omitida respecto de `63af4f9`. La prueba omitida adicional es la nueva proyección de una foto ambigua, aprobada con PostgreSQL. La base de prueba se detuvo y su volumen se conservó. La comprobación de Compose y del diff terminó correctamente.
+
+La validación en campo y la medición integral oficial conservan su seguimiento en Entrega 1. El cierre de esta auditoría queda sujeto a la revisión independiente de los dos diffs exportados.
