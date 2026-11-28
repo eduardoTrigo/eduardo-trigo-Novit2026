@@ -210,6 +210,28 @@ def test_asociacion_distingue_objetivo_directo_de_referencias_espaciales(tmp_pat
     assert foto["estado_asociacion"] == ("fila" if tag else "nota")
 
 
+@pytest.mark.parametrize(("complemento", "variable"), [
+    ("de la dos, el motor a 65 grados", None),
+    ("de la dos y el motor a 65 grados", None),
+    ("de la empaquetadura de la dos y el motor a 65 grados", "goteo_empaquetadura"),
+    ("de la empaquetadura de la dos, la uno motor a 65 grados", "goteo_empaquetadura"),
+])
+def test_lectura_posterior_a_foto_no_identifica_objetivo_fotografico(tmp_path, complemento, variable):
+    texto = f"La dos gotea por la empaquetadura y saqué foto {complemento}."
+    nota, _, _, partes, _ = iniciar(tmp_path, texto, [FOTO], None)
+    parte = partes.obtener(nota.id)
+    tag_motor = "B-101" if "la uno" in complemento else "B-102"
+    assert parte.estado == "borrador_pendiente"
+    assert [(f.tag, f.variable, f.valor, f.unidad) for f in parte.filas] == [
+        ("B-102", "goteo_empaquetadura", None, None),
+        (tag_motor, "temperatura_motor_ir", 65, "degC"),
+    ]
+    foto, = parte.contexto["fotos"]
+    assert foto["estado_asociacion"] == ("fila" if variable else "nota")
+    assert (foto["tag"], foto["variable"]) == ("B-102" if variable else None, variable)
+    assert foto["objetivo_pendiente"] is None
+
+
 @pytest.mark.parametrize(("referencia", "asociable"), [
     ("del manómetro de descarga cerca de la dos", False),
     ("del manómetro de descarga de la dos junto a la tres", True),

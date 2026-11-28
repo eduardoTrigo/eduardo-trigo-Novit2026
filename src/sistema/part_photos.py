@@ -13,7 +13,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sistema.b1_events import MAX_FOTOS_B1, ruta_foto_valida
 from sistema.execution_budget import CorteEjecucion
 from sistema.part_context import MAX_BYTES_FOTO_B1
-from sistema.part_extraction import excluir_referencias_espaciales, indexar_aliases, normalizar_texto
+from sistema.part_extraction import (
+    excluir_referencias_espaciales,
+    indexar_aliases,
+    normalizar_texto,
+    separar_complemento_foto,
+)
 
 
 PLAZO_FOTO_S = 0.75
@@ -91,14 +96,15 @@ def _asociacion(texto, catalogo, filas):
     if len(menciones) > 1:
         return {"motivo": "mencion_ambigua"}
     frase, prefijo, objetivo = menciones[0]
-    if re.search(r"\b(?:foto|fotos|no|quizas|creo)\b", prefijo + " " + objetivo):
-        return {"motivo": "mencion_ambigua"}
     aliases = indexar_aliases(catalogo)
     if not aliases:
         return {}
     patrones = [re.escape(a) for a in sorted(aliases, key=len, reverse=True)]
     patron_aliases = "(" + "|".join(patrones) + r")(?![\w-])"
     referencia = re.compile(r"(?<![\w-])" + patron_aliases)
+    objetivo, _ = separar_complemento_foto(objetivo, referencia, exigir_inicio_lectura=True)
+    if re.search(r"\b(?:foto|fotos|no|quizas|creo)\b", prefijo + " " + objetivo):
+        return {"motivo": "mencion_ambigua"}
     objetivo = excluir_referencias_espaciales(objetivo, referencia)
     if objetivo is None or re.search(r"\bo\b", prefijo + " " + objetivo):
         return {"motivo": "mencion_ambigua"}

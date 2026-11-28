@@ -124,3 +124,57 @@ La segunda pasada del diff acumulado reprodujo dos casos adicionales antes de co
 La salida por nota del cierre fue idéntica a la de `211e71b` con ambas transcripciones. Pasaron cuatro integraciones de memoria fotográfica con PostgreSQL aislado. La evidencia usa STT archivado e integraciones con datos controlados.
 
 Pasaron 236 pruebas focalizadas y la suite completa con `PIA3_RAG_CORPUS` obtuvo 710 aprobadas y 22 omitidas. También pasaron `docker compose config --quiet` y `git diff --check`.
+
+### Cierre de la observación P2 sobre `7bce7a1`
+
+El preflight encontró `feat/31-voice-part-improvements` limpia, en `7bce7a1` y alineada con su referencia de seguimiento. Se revisó el diff acumulado desde `eadc7b0` y se contrastó la conducta con el Issue #31, el apartado A del Anexo, la rúbrica y `FilaParte` de `planta_contrato` 0.2.0. [Issue #31](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/issues/31) · [Observación P2](https://github.com/eduardoTrigo/eduardo-trigo-Novit2026/pull/32#discussion_r4720727657)
+
+En «La dos gotea por la empaquetadura y el motor a 65 grados», el reconocimiento del comienzo de la segunda lectura omitía la preposición «a». La cláusula resultante llegaba junta a `_fila()`, que aceptaba la temperatura y perdía el goteo. La primera pasada de TDD sobre `7bce7a1` reprodujo 28 fallos y obtuvo 22 controles aprobados. La revisión de las fotografías reprodujo cuatro fallos adicionales al usar texto de la lectura posterior como evidencia del objetivo de la foto.
+
+El segmentador usa el mismo comienzo de medición de componente dentro de una frase y después de una foto. Las conjunciones dentro de un numeral hablado se conservan. Las cláusulas con evidencia insuficiente se guardan como segmentos pendientes, y el agente aplica su transición existente a aclaración o revisión manual. La asociación de fotos usa el objetivo delimitado y exige indicios de lectura para descontar un sufijo ambiguo después de una coma. Una referencia espacial directa no asigna el TAG.
+
+| Caso con expectativas de dominio | `eadc7b0` | `7bce7a1` | Resultado del cierre |
+| --- | --- | --- | --- |
+| Goteo y «el motor a 65 grados» o «motor a sesenta y cinco grados» | Ambas filas | Solo temperatura, con borrador | B-102 conserva el goteo con valor y unidad nulos y el motor a 65 degC. |
+| «Hace ruido en el motor» y su variante «en el motor y el rodamiento» | Revisión manual. La variante coordinada pierde parte de la observación. | Borrador con el complemento íntegro | Se conserva el borrador cualitativo con el complemento completo. |
+| Ruido en motor y rodamiento a 59 grados | Ambas filas | Revisión manual sin filas | Se recuperan ruido y temperatura del rodamiento de B-102. |
+| B-101 a 112 kilos de descarga y rodamiento sin artículo, o motor tras una foto intercalada | Ambas filas | Ambas filas | Se conservan 112 kg/cm2 y 65 degC bajo el equipo activo. |
+| Goteo y motor a aproximadamente 65 grados | Goteo y revisión manual | Revisión manual sin filas | Se mantiene el goteo y se guarda la cláusula exacta del motor para revisión. |
+| Goteo seguido de dos componentes con una sola magnitud | Asigna la magnitud al motor y deriva a revisión | Revisión manual sin filas | Solo se conserva el goteo. La magnitud y ambos componentes quedan en el mismo segmento pendiente. |
+| Motor a 65 grados y después «no hace ruido en el rodamiento» | Revisión manual sin filas | Revisión manual sin filas | Conserva la temperatura y la observación negativa con valor y unidad nulos. |
+| Foto de B-102 intercalada en una lectura de B-101, seguida de temperatura sin sujeto | Atribuye la temperatura a B-102 | Pierde la temperatura | Conserva el goteo de B-101 y solicita elegir B-101 o B-102 para la temperatura. |
+| «Cerca de la dos, hace ruido en el motor» | Fila cualitativa de B-102 en revisión | Borrador para B-102 | Revisión manual con el ruido pendiente y sin TAG atribuido. |
+
+Las pruebas verifican unidades, observaciones, segmentos y estados exactos. También cubren negación, rangos y dudas de equipo, lecturas incompletas, decimales, cambios explícitos de TAG, fotos y recuperación. El caso P2 atraviesa el worker, la outbox y SQLite. Publica las dos filas con el timestamp original, exige confirmación explícita y recupera el parte confirmado al reabrir la base. Con un histórico controlado de 70–75 degC, los 65 degC requieren una aclaración de rango antes del borrador y ambas filas se conservan.
+
+La revisión adversarial comprobó que el cambio mantiene las observaciones junto a las fotos, la asociación después de una aclaración, la exclusión de ubicaciones, los complementos de motor o rodamiento, las lecturas sin artículo y el equipo activo entre fotos. También detectó que buscar repetidamente el final de un numeral podía superar el plazo con transcripciones de casi 32.000 caracteres. El reconocimiento recorre los numerales antes de decidir los cortes. Las dos pruebas de límite conservan las filas válidas, el segmento pendiente y el estado de revisión manual.
+
+La evaluación dirigida se repitió desde copias aisladas de las dos revisiones de Git y desde el árbol de trabajo, con las capturas SQLite históricas en solo lectura. El cierre y `7bce7a1` produjeron la misma salida para cada una de las 13 notas y para ambas fuentes de texto.
+
+| Métrica de la evaluación dirigida | `eadc7b0` | `7bce7a1` y cierre |
+| --- | ---: | ---: |
+| STT archivado, borradores y confirmaciones virtuales | 9/13 y 9 | 11/13 y 9 |
+| STT archivado, TAG y variable | 21/24 cada uno | 23/24 cada uno |
+| STT archivado, valor y unidad | 19/22 cada uno | 20/22 y 21/22 |
+| STT archivado, preguntas justificadas y mensajes con timestamp correcto | 3 y 12/12 | 5 y 16/16 |
+| Referencia, borradores y confirmaciones virtuales | 10/13 y 10 | 12/13 y 10 |
+| Referencia, TAG, variable, valor y unidad | 24/24, 24/24, 22/22 y 22/22 | 24/24, 24/24, 22/22 y 22/22 |
+| Referencia, preguntas justificadas y mensajes con timestamp correcto | 3 y 13/13 | 3 y 15/15 |
+
+El replay emplea el operador virtual, transcripciones archivadas y muestras históricas resumidas. La voz de campo, la latencia con el simulador y la calificación oficial quedan pendientes para el cierre de la entrega.
+
+#### Pruebas del cierre
+
+Los 62 casos de voz se ejecutaron con el código de las tres versiones. Aprobaron 2 en `eadc7b0`, 23 en `7bce7a1` y 62 en el cierre. Los fallos de la base incluyen expectativas sobre `segmentos_no_interpretados`, un campo introducido después de esa revisión. La tabla anterior permite comparar las filas y el estado sin depender de ese campo. Los cuatro casos nuevos de asociación fotográfica fallaron sobre `7bce7a1` y aprobaron en el cierre.
+
+| Ejecución | Aprobadas | Fallidas | Omitidas |
+| --- | ---: | ---: | ---: |
+| Regresiones de voz y asociación | 66 | 0 | 0 |
+| Parte por voz y runtime LangChain | 422 | 0 | 0 |
+| Aclaraciones, fotos, mensajes, integración y persistencia SQLite | 149 | 0 | 0 |
+| Suite habitual con `PIA3_RAG_CORPUS` | 776 | 0 | 22 |
+| PostgreSQL 16 con pgvector en Compose aislado | 9 | 0 | 0 |
+
+La suite habitual suma 66 aprobadas respecto de las 710 documentadas en `7bce7a1` y conserva 22 omisiones. Nueve corresponden a PostgreSQL y memoria, ejecutadas en la pasada aislada. Las otras corresponden a MCP con Docker (2), herramientas con el simulador (1), ingesta RAG (3) y retrieval con corpus en PostgreSQL (7). Pytest emitió el aviso de configuración de `pytest-asyncio`.
+
+`docker compose config --quiet` y `git diff --check` terminaron con código 0. PostgreSQL se probó con un puerto local y un volumen aislado, conservado después de detener el contenedor. El primer intento de pytest encontró un error de permisos en su directorio temporal. Las cifras finales corresponden a la ejecución autorizada con directorios temporales locales.

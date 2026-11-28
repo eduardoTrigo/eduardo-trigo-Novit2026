@@ -10,7 +10,7 @@ from sistema.part_clarification import resolver
 from sistema.part_extraction import extraer_parte, interpretar_numero
 from sistema.part_context import verificar_lectura
 from sistema.plant_tool_models import HistorialSensores, Muestra
-from test_part_clarification import catalogo
+from test_part_clarification import catalogo, iniciar, mensaje
 from test_part_extraction import definicion_planta
 from test_part_messages import preparar, transcribir_nota
 from test_part_workflow import procesar, respuesta
@@ -22,6 +22,227 @@ def derivar(texto, **kwargs):
     control = ControlEjecucion(nota.id, "prueba", PresupuestoEjecucion(), ConsumoEjecucion(),
                                inicio=time.monotonic(), reloj=time.monotonic, cancelada=lambda: False)
     return AgentePartes(definicion_planta, **kwargs).nota(control, nota, texto)
+
+
+@pytest.mark.parametrize("componente", ["motor", "rodamiento"])
+@pytest.mark.parametrize(("separador", "articulo", "lectura"), [
+    (" y ", "el ", "a 65 grados"),
+    (" y ", "", "a sesenta y cinco grados"),
+    (" ", "", "a 65 grados"),
+    (", ", "el ", "a 65 grados"),
+    (" y ", "", "65 grados"),
+    (" y ", "el ", "está a 65 grados"),
+    (" y ", "", "está en sesenta y cinco grados"),
+    (" ", "el ", "midió 65 grados"),
+    (" y ", "", "marca sesenta y cinco grados"),
+    (" y ", "el ", "marcó 65 grados"),
+    (" y ", "", "me dio 65 grados"),
+    (" y ", "el ", "indicó 65 grados"),
+    (" y ", "", "a menos cinco grados"),
+    (" y ", "el ", "en 65,5 grados"),
+])
+def test_goteo_y_medicion_de_componente(componente, separador, articulo, lectura):
+    plan = derivar(f"La dos gotea por la empaquetadura{separador}{articulo}{componente} {lectura}.")
+    valor = {"a menos cinco grados": -5, "en 65,5 grados": 65.5}.get(lectura, 65)
+    assert [(f.tag, f.variable, f.valor, f.unidad, f.observacion) for f in plan.filas] == [
+        ("B-102", "goteo_empaquetadura", None, None, "gotea por la empaquetadura"),
+        ("B-102", f"temperatura_{componente}_ir", valor, "degC", None),
+    ]
+    assert plan.estado == "borrador_pendiente"
+    assert plan.contexto["pendientes"] == plan.contexto["segmentos_no_interpretados"] == []
+    assert not plan.contexto["no_interpretada"]
+    assert plan.mensaje.espera_respuesta and plan.mensaje.pantalla.filas == plan.filas
+
+
+@pytest.mark.parametrize(("texto", "filas"), [
+    ("La dos hace ruido en el motor y el rodamiento a 59 grados.", [
+        ("B-102", "ruido", None, None, "hace ruido en el motor"),
+        ("B-102", "temperatura_rodamiento_ir", 59, "degC", None),
+    ]),
+    ("La dos motor a 65 grados y no hace ruido en el rodamiento.", [
+        ("B-102", "temperatura_motor_ir", 65, "degC", None),
+        ("B-102", "ruido", None, None, "no hace ruido en el rodamiento"),
+    ]),
+    ("La dos rodamiento a 59 grados vibra en el motor.", [
+        ("B-102", "temperatura_rodamiento_ir", 59, "degC", None),
+        ("B-102", "vibracion", None, None, "vibra en el motor"),
+    ]),
+    ("La dos gotea por la empaquetadura vibra en el motor.", [
+        ("B-102", "goteo_empaquetadura", None, None, "gotea por la empaquetadura"),
+        ("B-102", "vibracion", None, None, "vibra en el motor"),
+    ]),
+    ("La dos vibra en el motor; la dos correas flojas y rodamiento a 59 grados.", [
+        ("B-102", "vibracion", None, None, "vibra en el motor"),
+        ("B-102", "estado_correas", None, None, "correas flojas"),
+        ("B-102", "temperatura_rodamiento_ir", 59, "degC", None),
+    ]),
+    ("La dos hace ruido en el motor y el rodamiento.", [
+        ("B-102", "ruido", None, None, "hace ruido en el motor y el rodamiento"),
+    ]),
+    ("La dos hace ruido en el motor, el rodamiento y las correas.", [
+        ("B-102", "ruido", None, None, "hace ruido en el motor, el rodamiento y las correas"),
+    ]),
+    ("La dos hace ruido en el motor y las correas están flojas.", [
+        ("B-102", "ruido", None, None, "hace ruido en el motor"),
+        ("B-102", "estado_correas", None, None, "las correas estan flojas"),
+    ]),
+    ("La dos gotea por la empaquetadura y 1640 psi de descarga.", [
+        ("B-102", "goteo_empaquetadura", None, None, "gotea por la empaquetadura"),
+        ("B-102", "presion_descarga_local", 1640, "psi", None),
+    ]),
+    ("La uno ciento treinta y cinco kilos de descarga y el motor a 65 grados.", [
+        ("B-101", "presion_descarga_local", 135, "kg/cm2", None),
+        ("B-101", "temperatura_motor_ir", 65, "degC", None),
+    ]),
+    ("La uno 112 kilos de descarga y rodamiento 65 grados.", [
+        ("B-101", "presion_descarga_local", 112, "kg/cm2", None),
+        ("B-101", "temperatura_rodamiento_ir", 65, "degC", None),
+    ]),
+    ("La uno 112 kilos de descarga y saqué foto del manómetro, el motor a 65 grados.", [
+        ("B-101", "presion_descarga_local", 112, "kg/cm2", None),
+        ("B-101", "temperatura_motor_ir", 65, "degC", None),
+    ]),
+    ("La uno 112 kilos de descarga y saqué foto del manómetro y motor a 65 grados.", [
+        ("B-101", "presion_descarga_local", 112, "kg/cm2", None),
+        ("B-101", "temperatura_motor_ir", 65, "degC", None),
+    ]),
+    ("Saqué foto de la uno y la dos el motor a 65 grados.", [
+        ("B-102", "temperatura_motor_ir", 65, "degC", None),
+    ]),
+    ("La dos gotea por la empaquetadura y la tres motor a 65 grados.", [
+        ("B-102", "goteo_empaquetadura", None, None, "gotea por la empaquetadura"),
+        ("B-103", "temperatura_motor_ir", 65, "degC", None),
+    ]),
+    ("La uno 112 kilos de descarga cerca de la dos y la tres motor a 65 grados.", [
+        ("B-101", "presion_descarga_local", 112, "kg/cm2", None),
+        ("B-103", "temperatura_motor_ir", 65, "degC", None),
+    ]),
+])
+def test_matriz_segmentacion_de_lecturas_y_complementos(texto, filas):
+    plan = derivar(texto)
+    assert [(f.tag, f.variable, f.valor, f.unidad, f.observacion) for f in plan.filas] == filas
+    assert plan.estado == "borrador_pendiente"
+    assert plan.contexto == {"pendientes": [], "no_interpretada": False, "segmentos_no_interpretados": []}
+    assert plan.mensaje.pantalla.filas == plan.filas
+
+
+@pytest.mark.parametrize(("lectura", "segmento"), [
+    ("el motor a aproximadamente 65 grados", "el motor a aproximadamente 65 grados"),
+    ("motor a más o menos sesenta y cinco grados", "motor a mas o menos sesenta y cinco grados"),
+    ("el rodamiento no está a 59 grados", "el rodamiento no esta a 59 grados"),
+    ("el motor a", "el motor a"),
+    ("el motor a aproximadamente", "el motor a aproximadamente"),
+    ("el motor creo que a 65 grados", "el motor creo que a 65 grados"),
+    ("el rodamiento marca", "el rodamiento marca"),
+    ("el rodamiento o el motor a 65 grados", "el rodamiento o el motor a 65 grados"),
+    ("el rodamiento y el motor a 65 grados", "el rodamiento y el motor a 65 grados"),
+])
+def test_goteo_con_lectura_de_componente_sin_resolver(lectura, segmento):
+    plan = derivar(f"La dos gotea por la empaquetadura y {lectura}.")
+    fila, = plan.filas
+    assert (fila.tag, fila.variable, fila.valor, fila.unidad, fila.observacion) == (
+        "B-102", "goteo_empaquetadura", None, None, "gotea por la empaquetadura",
+    )
+    assert plan.estado == "revision_manual" and plan.mensaje is None
+    assert plan.contexto["no_interpretada"] and not plan.contexto["pendientes"]
+    assert plan.contexto["segmentos_no_interpretados"] == [
+        {"texto": segmento, "motivo": "lectura_no_resuelta"},
+    ]
+
+
+@pytest.mark.parametrize(("texto", "segmento"), [
+    ("La dos hace ruido en el motor a 65 grados.", "hace ruido en el motor a 65 grados"),
+    ("Saqué foto de un goteo cerca de la dos y motor a 65 grados.", "motor a 65 grados"),
+    ("Cerca de la dos, hace ruido en el motor.", "hace ruido en el motor"),
+])
+def test_segmento_ambiguo_no_inventa_fila(texto, segmento):
+    plan = derivar(texto)
+    assert plan.estado == "revision_manual" and not plan.filas and plan.mensaje is None
+    assert plan.contexto["no_interpretada"] and not plan.contexto["pendientes"]
+    assert plan.contexto["segmentos_no_interpretados"] == [
+        {"texto": segmento, "motivo": "lectura_no_resuelta"},
+    ]
+
+
+def test_foto_con_otro_equipo_preserva_goteo_y_pide_aclarar_temperatura():
+    plan = derivar("La uno gotea por la empaquetadura y saqué foto de la dos y el motor a 65 grados.")
+    fila, = plan.filas
+    assert (fila.tag, fila.variable, fila.valor, fila.unidad, fila.observacion) == (
+        "B-101", "goteo_empaquetadura", None, None, "gotea por la empaquetadura",
+    )
+    assert plan.estado == "aclaracion_pendiente" and plan.mensaje.espera_respuesta
+    assert plan.contexto == {"pendientes": [
+        {"tipo": "equipo", "clausula": "el motor a 65 grados", "opciones": ["B-101", "B-102"]},
+    ], "no_interpretada": False, "segmentos_no_interpretados": []}
+
+
+def test_goteo_sin_origen_queda_pendiente_aunque_la_temperatura_sea_clara():
+    plan = derivar("La dos gotea y el motor a 65 grados.")
+    assert [(f.tag, f.variable, f.valor, f.unidad) for f in plan.filas] == [
+        ("B-102", "temperatura_motor_ir", 65, "degC"),
+    ]
+    assert plan.estado == "revision_manual" and plan.mensaje is None
+    assert plan.contexto["segmentos_no_interpretados"] == [{"texto": "gotea", "motivo": "lectura_no_resuelta"}]
+
+
+@pytest.mark.parametrize("fragmento", [
+    pytest.param("uno " * 7800 + "texto vibra", id="magnitud-sin-cierre"),
+    pytest.param("y uno " * 5100 + "texto", id="conjunciones-en-magnitud"),
+])
+def test_p2_numerales_largos_no_consumen_el_plazo_del_parte(fragmento):
+    plan = derivar(f"{fragmento}. La dos gotea por la empaquetadura y motor a 65 grados.")
+    assert [(f.tag, f.variable, f.valor) for f in plan.filas] == [
+        ("B-102", "goteo_empaquetadura", None), ("B-102", "temperatura_motor_ir", 65),
+    ]
+    assert plan.estado == "revision_manual" and plan.contexto["segmentos_no_interpretados"]
+    assert plan.mensaje is None
+
+
+def test_p2_publica_ambas_filas_y_exige_confirmacion_humana(tmp_path):
+    notas, _, outbox, partes, worker = preparar(tmp_path)
+    nota = crear_nota()
+    transcribir_nota(notas, nota, "La dos gotea por la empaquetadura y el motor a 65 grados.")
+    assert worker.procesar_siguiente()
+    borrador = MensajeTablet.model_validate_json(outbox.reclamar()["payload"])
+    parte = partes.obtener(nota.id)
+    assert parte.estado == "borrador_pendiente" and borrador.espera_respuesta and borrador.ts == nota.ts
+    assert [(f.tag, f.variable, f.valor, f.unidad, f.observacion) for f in borrador.pantalla.filas] == [
+        ("B-102", "goteo_empaquetadura", None, None, "gotea por la empaquetadura"),
+        ("B-102", "temperatura_motor_ir", 65, "degC", None),
+    ]
+    _, _, _, partes, worker = preparar(tmp_path)
+    procesar(partes, worker, respuesta(partes.obtener(nota.id), "Confirmo"))
+    confirmado = preparar(tmp_path)[3].obtener(nota.id)
+    assert confirmado.estado == "confirmado" and confirmado.filas == borrador.pantalla.filas
+
+
+def test_p2_pide_confirmar_el_rango_sin_perder_el_goteo(tmp_path):
+    def planta():
+        datos = definicion_planta()
+        datos["sensores"].append({"tag": "B-102", "variable": "temperatura_motor_ir", "unidad": "degC"})
+        return datos
+
+    def historial(tag, variable, ts):
+        assert (tag, variable, ts) == ("B-102", "temperatura_motor_ir", crear_nota().ts)
+        return [{"ts": (ts - timedelta(days=i)).isoformat(), "valor": valor}
+                for i, valor in enumerate((70, 75), start=1)]
+
+    nota, outbox, partes, worker = iniciar(
+        tmp_path, "La dos gotea por la empaquetadura y el motor a 65 grados.", historial, planta,
+    )
+    turno = partes.obtener(nota.id)
+    assert turno.estado == "aclaracion_pendiente"
+    assert turno.contexto["pendientes"] == [{"tipo": "rango", "fila": turno.filas[1].model_dump()}]
+    assert [(f.variable, f.valor, f.unidad, f.observacion) for f in turno.filas] == [
+        ("goteo_empaquetadura", None, None, "gotea por la empaquetadura"),
+        ("temperatura_motor_ir", 65, "degC", None),
+    ]
+    assert mensaje(outbox).ts == nota.ts
+    procesar(partes, worker, respuesta(turno, "Sí, confirmo."))
+    nuevo = partes.obtener(nota.id)
+    assert nuevo.estado == "borrador_pendiente" and nuevo.filas == turno.filas
+    procesar(partes, worker, respuesta(nuevo, "Confirmo.", identificador="PARTE-FINAL"))
+    assert partes.obtener(nota.id).estado == "confirmado"
 
 
 @pytest.mark.parametrize(("texto", "variable", "observacion"), [

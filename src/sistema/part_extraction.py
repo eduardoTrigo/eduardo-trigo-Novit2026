@@ -46,26 +46,35 @@ _PREDICADO = (
     r"dio|medio|marco|gotea|pierde|vibra|suena|hace)\b|[+-]?\d)"
 )
 _COMPONENTE = r"(?:el\s+)?(?:rodamiento|motor)\b"
+_INDICIO_INCERTIDUMBRE = r"no|mas\s+o\s+menos|aproximadamente|alrededor\s+de|quizas|creo(?:\s+que)?|entre"
+_INCERTIDUMBRE = re.compile(rf"\b(?:{_INDICIO_INCERTIDUMBRE})\b")
+_INTRODUCCION_MEDIDA = rf"(?:a|en|{_INDICIO_INCERTIDUMBRE})"
+_INICIO_MAGNITUD = rf"(?:{_INTRODUCCION_MEDIDA}\s+)*(?:menos\s+)?{_NUMERAL}"
 _LECTURA_COMPONENTE = re.compile(
-    rf"{_COMPONENTE}\s+(?:{_PREDICADO}|(?:no\s+)?(?:midio|mide|me\s+dio|se\s+midio|marca)\b"
-    rf"|(?:(?:menos|aproximadamente|entre)\s+)?{_NUMERAL})"
+    rf"{_COMPONENTE}(?:\s+(?:y|e|o|u)\s+{_COMPONENTE})?\s+"
+    rf"(?:{_PREDICADO}|(?:no\s+)?(?:midio|mide|me\s+dio|se\s+midio|marca|indico|indica)\b"
+    rf"|{_INICIO_MAGNITUD}|{_INTRODUCCION_MEDIDA}(?:\s+{_INTRODUCCION_MEDIDA})*(?=\s*(?:,|$)))"
 )
-_LECTURA_TRAS_FOTO = re.compile(rf"\s*(?:{_PREDICADO}|{_LECTURA_COMPONENTE.pattern}|(?:menos\s+)?{_NUMERAL})")
-_CORTE_FOTO = re.compile(rf"(?<!\d),|,(?!\d)|\by\s+(?={_PREDICADO}|{_LECTURA_COMPONENTE.pattern})")
-_UBICACION_FOTO = re.compile(
+_LUGAR = (
     r"\b(?:(?:cerca|al\s+lado|detras|delante|debajo|encima|alrededor|enfrente|"
-    r"en\s+las\s+inmediaciones)\s+del?|(?:junto|frente|proxim[oa])\s+al?|donde)\s+[^,]*"
+    r"en\s+las\s+inmediaciones)\s+del?|(?:junto|frente|proxim[oa])\s+al?|donde)\s+"
 )
+_UBICACION_FOTO = re.compile(rf"{_LUGAR}[^,]*")
 _COORDINACION_ESPACIAL = re.compile(r"\b(?:y|e|o|u|ni)\b")
-_CLAUSULAS = re.compile(
-    r"(?<!\bmenos)(?:(?<!\d),|,(?!\d))|\by\s+(?=(?:(?:el|la|las)\s+)?"
-    r"(?:temperatura|presion|descarga|diferencial|nivel|correas|"
-    r"gotea|pierde|sigue goteando|visor|hace|tiene|ruido|vibra|vibracion)\b)"
+_ENLACE_COMPONENTE = re.compile(r"\b(?:a|al|bajo|con|de|del|desde|el|en|entre|hacia|hasta|o|para|por|que|sin|sobre|tras|u)$")
+_SOLO_COMPONENTE = re.compile(_COMPONENTE)
+_CORREAS = r"(?:las\s+)?correas\b"
+_ESTADO_CORREAS = re.compile(
+    rf"{_CORREAS}\s+(?:estan|estaban|en|(?:muy\s+)?(?:flojas|tensas|gastadas)|chillan)\b"
 )
-_CORTE_COMPONENTE = re.compile(rf"\s+(?:y\s+)?(?={_COMPONENTE})")
-_ENLACE_COMPONENTE = re.compile(r"\b(?:a|al|bajo|con|de|del|desde|el|en|entre|hacia|hasta|o|para|por|sin|sobre|tras|u)$")
-_INCERTIDUMBRE = re.compile(
-    r"\b(?:no|mas o menos|aproximadamente|alrededor de|quizas|creo|entre)\b"
+_MENCION_COMPONENTE = re.compile(rf"(?:{_COMPONENTE}|{_CORREAS})")
+_COMPLEMENTO_COMPONENTES = re.compile(
+    rf"\b(?:en|del?|sobre|entre)\s+{_MENCION_COMPONENTE.pattern}"
+    rf"(?:(?:,\s*|\s+(?:y|e|o|u)\s+){_MENCION_COMPONENTE.pattern})*$"
+)
+_VERBO_OBSERVACION = (
+    r"(?:no\s+)?(?:(?:hace|hay|tiene|se\s+escucha)\s+(?:un\s+)?(?:ruido|golpeteo)|vibra|suena|"
+    r"gotea|pierde|chorrea|sigue\s+goteando)\b"
 )
 _UNIDADES = {
     "kilo": "kg/cm2", "kilos": "kg/cm2", "kilogramos": "kg/cm2", "kg/cm2": "kg/cm2",
@@ -77,6 +86,27 @@ _UNIDADES = {
 _UNIDAD = re.compile(r"(?<!\w)(?:" + "|".join(
     re.escape(u) for u in sorted(_UNIDADES, key=len, reverse=True)
 ) + r")(?!\w)")
+_SUFIJO_CANTIDAD = re.compile(
+    rf"\s+(?:{_UNIDAD.pattern}\s+)?de\s+(?:descarga|succion|diferencial|nivel|caudal)\b"
+)
+_CORTE_CANTIDAD = rf"(?P<y_cantidad>\by\s+)(?=(?:menos\s+)?{_NUMERAL})"
+_LECTURA_TRAS_FOTO = re.compile(
+    rf"\s*(?:{_PREDICADO}|{_LECTURA_COMPONENTE.pattern}|{_VERBO_OBSERVACION}"
+    rf"|{_ESTADO_CORREAS.pattern}|(?:menos\s+)?{_NUMERAL})"
+)
+_CORTE_FOTO = re.compile(
+    rf"(?<!\d),|,(?!\d)|\by\s+(?={_PREDICADO}|{_LECTURA_COMPONENTE.pattern}"
+    rf"|{_VERBO_OBSERVACION}|{_ESTADO_CORREAS.pattern})|{_CORTE_CANTIDAD}"
+)
+_CLAUSULAS = re.compile(
+    rf"(?P<coma>(?<!\bmenos)(?:(?<!\d),|,(?!\d)))\s*|"
+    rf"\by\s+(?={_VERBO_OBSERVACION}|{_ESTADO_CORREAS.pattern}|"
+    r"(?:(?:el|la)\s+)?(?:temperatura|presion|descarga|succion|diferencial|nivel|caudal|"
+    rf"visor|hace|tiene|ruido|vibracion)\b)|"
+    rf"{_CORTE_CANTIDAD}|"
+    rf"(?P<componente>\s+(?:y\s+)?)(?={_COMPONENTE})|"
+    rf"(?P<verbo>\s+)(?={_VERBO_OBSERVACION})"
+)
 _PRESIONES = {"kg/cm2", "psi", "bar"}
 _PRESION_EN_KG = {"kg/cm2": 1.0, "psi": 1 / 14.2233, "bar": 1 / 0.980665}
 _CUANTITATIVAS = (
@@ -88,12 +118,12 @@ _CUANTITATIVAS = (
     ("nivel", "tanque", r"\b(?:nivel|m|metros?)\b", {"m"}),
     ("caudal", "caudalimetro", r"\bcaudal\b", {"m3/d"}),
 )
+_GOTEO = re.compile(r"\b(?:gotea|goteando|goteo|pierde|chorrea)\b")
 _CUALITATIVAS = (
     ("estado_correas", r"\bcorreas\b"),
     ("nivel_aceite_visor", r"\b(?:visor de aceite|aceite en el visor)\b"),
     ("estado", r"\b(?:parad[ao]|disparad[ao]|no arranca)\b"),
-    ("goteo_empaquetadura", r"\b(?:gotea|goteando|goteo|pierde|chorrea)\b.*\bempaquetadura\b|"
-                            r"\bempaquetadura\b.*\b(?:gotea|goteando|goteo|pierde|chorrea)\b"),
+    ("goteo_empaquetadura", rf"^(?=.*\bempaquetadura\b).*{_GOTEO.pattern}"),
     ("ruido", r"\b(?:golpeteo|ruido|suena)\b"),
     ("vibracion", r"\b(?:vibracion|vibra|vibrando)\b"),
 )
@@ -195,16 +225,22 @@ def _sensores(catalogo):
 def _fila(clausula, equipo, sensores, candidatos=()):
     clausula = re.sub(r"(\b(?:me dio|medio)\s+0)-(\d)(?=\s+de diferencial\b)", r"\1.\2", clausula)
     numeros = list(_NUMEROS.finditer(clausula))
-    for variable, patron in _CUALITATIVAS:
-        if re.search(patron, clausula) and all(n.group() in {"un", "una"} for n in numeros):
-            if equipo is None:
-                if len(candidatos) > 1 and not _INCERTIDUMBRE.search(clausula):
-                    return None, {
-                        "tipo": "equipo", "clausula": clausula, "opciones": [e["tag"] for e in candidatos],
-                    }
-                return None, True
-            return FilaParte(tag=equipo["tag"], variable=variable, observacion=clausula), False
-
+    cualitativas = [variable for variable, patron in _CUALITATIVAS if re.search(patron, clausula)]
+    if len(cualitativas) > 1 and "estado_correas" in cualitativas and _COMPLEMENTO_COMPONENTES.search(clausula):
+        cualitativas.remove("estado_correas")
+    if "goteo_empaquetadura" not in cualitativas and _GOTEO.search(clausula):
+        return None, True
+    if cualitativas:
+        # Una cláusula indivisible con indicios de varias filas conserva la evidencia para revisión.
+        if len(cualitativas) > 1 or any(n.group() not in {"un", "una"} for n in numeros):
+            return None, True
+        if equipo is None:
+            if len(candidatos) > 1 and not _INCERTIDUMBRE.search(clausula):
+                return None, {
+                    "tipo": "equipo", "clausula": clausula, "opciones": [e["tag"] for e in candidatos],
+                }
+            return None, True
+        return FilaParte(tag=equipo["tag"], variable=cualitativas[0], observacion=clausula), False
     candidatas = [
         (variable, unidades) for variable, tipo, patron, unidades in _CUANTITATIVAS
         if re.search(patron, clausula) and (equipo is None or equipo.get("tipo") == tipo)
@@ -317,6 +353,38 @@ def interpretar_medicion(
     return valor, unidad
 
 
+def _inicios_de_cantidad(texto):
+    return {n.start() for n in _NUMEROS.finditer(texto) if _SUFIJO_CANTIDAD.match(texto, n.end())}
+
+
+def _termina_en_medicion(texto):
+    numeros = list(_NUMEROS.finditer(texto))
+    if not numeros:
+        return False
+    fin = numeros[-1].end()
+    return fin == len(texto) or bool(_UNIDAD.fullmatch(texto[fin:].strip()) or _SUFIJO_CANTIDAD.fullmatch(texto, fin))
+
+
+def separar_complemento_foto(complemento, referencias, *, exigir_inicio_lectura=False):
+    """Delimita el objetivo de una foto y la lectura que la sigue."""
+    corte_foto = re.compile(rf"{_CORTE_FOTO.pattern}|\by\s+(?={referencias.pattern}{_LECTURA_TRAS_FOTO.pattern})")
+    cantidades = _inicios_de_cantidad(complemento)
+    for corte in corte_foto.finditer(complemento):
+        if corte["y_cantidad"] and corte.end() not in cantidades:
+            continue
+        lectura = complemento[corte.end():].strip()
+        if _UBICACION_FOTO.match(lectura):
+            continue
+        if exigir_inicio_lectura:
+            equipo = referencias.match(lectura)
+            if not _LECTURA_TRAS_FOTO.match(lectura, equipo.end() if equipo else 0):
+                continue
+        return complemento[:corte.start()], lectura
+    corte = next((m.end() for m in referencias.finditer(complemento)
+                  if _LECTURA_TRAS_FOTO.match(complemento, m.end())), len(complemento))
+    return complemento[:corte], complemento[corte:].strip()
+
+
 def _fragmentos_de_oracion(oracion, referencias):
     """Devuelve texto de lectura y, tras una foto, sus referencias directas de equipo."""
     tomas = list(_TOMA_FOTO.finditer(oracion))
@@ -326,19 +394,10 @@ def _fragmentos_de_oracion(oracion, referencias):
     yield oracion[:tomas[0].start()].strip(), None
     alias = referencias.pattern
     sujeto_foto = re.compile(rf"\b(?:de|del|a)\s+(?P<sujeto>{alias}(?:\s+(?:y|e|o|u|/)\s+{alias})*)\s*$")
-    corte_foto = re.compile(rf"{_CORTE_FOTO.pattern}|\by\s+(?={alias}{_LECTURA_TRAS_FOTO.pattern})")
     sujetos = []
     for indice, toma in enumerate(tomas):
         fin = tomas[indice + 1].start() if indice + 1 < len(tomas) else len(oracion)
-        complemento = oracion[toma.end():fin]
-        corte = next((m for m in corte_foto.finditer(complemento)
-                      if not _UBICACION_FOTO.match(complemento[m.end():].lstrip())), None)
-        if corte is not None:
-            referencia, lectura = complemento[:corte.start()], complemento[corte.end():].strip()
-        else:
-            corte = next((m.end() for m in referencias.finditer(complemento)
-                          if _LECTURA_TRAS_FOTO.match(complemento, m.end())), len(complemento))
-            referencia, lectura = complemento[:corte], complemento[corte:].strip()
+        referencia, lectura = separar_complemento_foto(oracion[toma.end():fin], referencias)
         directa = excluir_referencias_espaciales(referencia, referencias)
         if directa and (sujeto := sujeto_foto.search(directa.rstrip(" ,"))):
             sujetos.extend(referencias.findall(sujeto["sujeto"]))
@@ -348,21 +407,37 @@ def _fragmentos_de_oracion(oracion, referencias):
 
 
 def _clausulas_del_equipo(fragmento):
-    for clausula in _CLAUSULAS.split(fragmento):
-        inicio = 0
-        for corte in _CORTE_COMPONENTE.finditer(clausula):
-            anterior = clausula[inicio:corte.start()].strip()
-            if not anterior or _ENLACE_COMPONENTE.search(anterior):
+    cantidades = _inicios_de_cantidad(fragmento)
+    inicio = 0
+    for corte in _CLAUSULAS.finditer(fragmento):
+        # Una conjunción interna de «ciento treinta y cinco» sigue dentro del número.
+        if corte["y_cantidad"] and corte.end() not in cantidades:
+            continue
+        anterior = fragmento[inicio:corte.start()].strip()
+        if corte["coma"]:
+            siguiente = corte.end()
+            if (_COMPLEMENTO_COMPONENTES.search(anterior) and _MENCION_COMPONENTE.match(fragmento, siguiente)
+                    and not _LECTURA_COMPONENTE.match(fragmento, siguiente)
+                    and not _ESTADO_CORREAS.match(fragmento, siguiente)):
+                continue
+        elif corte["componente"]:
+            if not anterior or _ENLACE_COMPONENTE.search(anterior) or _SOLO_COMPONENTE.fullmatch(anterior):
                 continue
             # Tras una lectura numérica, un segundo componente puede quedar
             # pendiente aunque la transcripción haya omitido su medición.
-            if not _LECTURA_COMPONENTE.match(clausula, corte.end()) and (
+            if not _LECTURA_COMPONENTE.match(fragmento, corte.end()) and (
                 not _NUMEROS.search(anterior) or any(re.search(p, anterior) for _, p in _CUALITATIVAS)
             ):
                 continue
-            yield anterior
-            inicio = corte.end()
-        yield clausula[inicio:].strip()
+        elif corte["verbo"]:
+            if _ENLACE_COMPONENTE.search(anterior) or not (
+                _termina_en_medicion(anterior) or _GOTEO.search(anterior)
+                or any(re.search(p, anterior) for _, p in _CUALITATIVAS)
+            ):
+                continue
+        yield anterior
+        inicio = corte.end()
+    yield fragmento[inicio:].strip()
 
 
 def _contexto_tras_foto(nombres, buscar, alias, equipo, candidatos):
@@ -384,6 +459,11 @@ def _clausulas_del_parte(texto, catalogo):
     patrones.extend([r"[a-z]{1,3}-\d{2,4}[a-z]?", "la bomba", "el filtro",
                      r"(?:bomba|filtro)(?=\s+(?:esta|estar|tiene|medio|me dio|gotea|vibra)\b)"])
     referencias = re.compile(r"(?<![\w-])(" + "|".join(patrones) + r")(?![\w-])")
+    lugar_equipo = re.compile(
+        rf"{_LUGAR}{referencias.pattern}"
+        rf"(?:\s+(?:y|e|o|u|ni)\s+(?:(?:de|del|a|al)\s+)?"
+        rf"{referencias.pattern}(?!{_LECTURA_TRAS_FOTO.pattern}))*"
+    )
 
     def buscar(nombre):
         if nombre in alias:
@@ -397,6 +477,7 @@ def _clausulas_del_parte(texto, catalogo):
         equipo = None
         candidatos = None
         for frase, sujetos_foto in _fragmentos_de_oracion(oracion, referencias):
+            frase = lugar_equipo.sub(" ", frase).strip()
             if sujetos_foto and not referencias.match(frase):
                 equipo, candidatos = _contexto_tras_foto(sujetos_foto, buscar, alias, equipo, candidatos)
             fragmentos = referencias.split(frase)
@@ -414,6 +495,8 @@ def _clausulas_del_parte(texto, catalogo):
                     ):
                         bomba_sin_identificar = True
                     continue
+                if indice + 1 < len(fragmentos):
+                    fragmento = re.sub(r"\b(?:y|e|o|u)\s*$", "", fragmento)
                 for clausula in _clausulas_del_equipo(fragmento):
                     opciones = candidatos or []
                     equipo_clausula = equipo
